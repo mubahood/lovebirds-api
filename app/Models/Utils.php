@@ -17,6 +17,43 @@ include_once('simple_html_dom.php');
 class Utils
 {
 
+    public static function get_stripe()
+    {
+        $key = env('STRIPE_KEY');
+        $stripe = new \Stripe\StripeClient($key);
+        return $stripe;
+    }
+
+    public static function sync_orders()
+    {
+        $key = env('STRIPE_KEY');
+        $stripe = new \Stripe\StripeClient($key);
+
+        $orders = \App\Models\Order::where([
+            'stripe_id' => null
+        ])->get();
+        foreach ($orders as $key => $order) {
+            if (($order->stripe_id != null) && (strlen($order->stripe_id) > 0)) {
+                continue;
+            }
+
+            if (count($order->get_items()) == 0) {
+                continue;
+            }
+            $order->create_payment_link($stripe);
+        }
+    }
+
+    public static function sync_products()
+    {
+        $stripe = new \Stripe\StripeClient(env('STRIPE_KEY'));
+        $products = Product::where([
+            'stripe_price' => null
+        ])->get();
+        foreach ($products as $key => $value) {
+            $value->sync($stripe);
+        }
+    }
 
 
     public static function get_platform()

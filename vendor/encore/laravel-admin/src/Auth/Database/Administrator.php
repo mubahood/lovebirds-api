@@ -22,6 +22,7 @@ class Administrator extends Model implements AuthenticatableContract
 
     protected $fillable = ['username', 'password', 'name', 'avatar'];
 
+    protected $table = 'users';
     /**
      * Create a new Eloquent model instance.
      *
@@ -47,7 +48,7 @@ class Administrator extends Model implements AuthenticatableContract
      */
     public function getAvatarAttribute($avatar)
     {
-        return $avatar; 
+        return $avatar;
         $num = rand(0, 12);
         return 'avatar-' . $num . '.jpg';
         if (url()->isValidUrl($avatar)) {

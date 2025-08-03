@@ -1,0 +1,18 @@
+{
+    "user_ids": [
+        6121,
+        6122,
+        6123,
+        6124,
+        6125,
+        6126
+    ],
+    "user_emails": [
+        "sarah.test@example.com",
+        "michael.test@example.com",
+        "emma.test@example.com",
+        "david.test@example.com",
+        "jessica.test@example.com",
+        "alex.test@example.com"
+    ]
+}
