@@ -3,13 +3,9 @@
 use App\Http\Controllers\ApiController;
 use App\Http\Controllers\DynamicCrudController;
 use App\Http\Controllers\ModerationController;
-use App\Models\StockItem;
-use App\Models\StockSubCategory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Middleware\JwtMiddleware;
-
-
 
 
 Route::post('auth/password-reset', [ApiController::class, 'password_reset']);
@@ -21,9 +17,8 @@ Route::post('auth/login', [ApiController::class, 'login']);
 Route::post('moderation/filter-content', [ModerationController::class, 'filterContent']);
 
 Route::post('api/{model}', [ApiController::class, 'my_update']);
-// Route::get('movies', [ApiController::class, 'get_movies']);
 Route::get('api/{model}', [ApiController::class, 'my_list']);
-Route::get('products-1', [ApiController::class, 'products_1']); 
+Route::get('products-1', [ApiController::class, 'products_1']);
 Route::post('file-uploading', [ApiController::class, 'file_uploading']);
 
 // Profile Photo Management Endpoints
@@ -38,15 +33,15 @@ Route::middleware([JwtMiddleware::class])->group(function () {
 
 
     Route::post("post-media-upload", [ApiController::class, 'upload_media']);
+    Route::post("upload-media-preview", [ApiController::class, 'upload_media_preview']); // Multimedia preview endpoint
     Route::post("product-create", [ApiController::class, "product_create"]);
     Route::post('products-delete', [ApiController::class, 'products_delete']);
-    
+
     // Cart & Order Management
     Route::post('cart/submit-order', [ApiController::class, 'submit_order']);
 
     Route::get('me', [ApiController::class, 'me']);
     Route::get('manifest', [ApiController::class, 'manifest']);
-    Route::get('movies', [DynamicCrudController::class, 'movies']);
     Route::get('users-list', [DynamicCrudController::class, 'users_list']);
     Route::get('/dynamic-list', [DynamicCrudController::class, 'index']);
     Route::post('/dynamic-save', [DynamicCrudController::class, 'save']);
@@ -69,7 +64,7 @@ Route::middleware([JwtMiddleware::class])->group(function () {
     Route::POST('chat-unblock-user', [ApiController::class, 'chat_unblock_user']);
     Route::get('chat-media-files', [ApiController::class, 'chat_media_files']);
     Route::get('chat-search-messages', [ApiController::class, 'chat_search_messages']);
-    
+
     // Date Planning & Chat Enhancement
     Route::post('get-chat-messages', [ApiController::class, 'getChatMessages']);
     Route::post('send-message', [ApiController::class, 'sendMessage']);
@@ -78,7 +73,7 @@ Route::middleware([JwtMiddleware::class])->group(function () {
     Route::post('get-popular-date-spots', [ApiController::class, 'getPopularDateSpots']);
     Route::post('save-planned-date', [ApiController::class, 'savePlannedDate']);
     Route::post('advanced-search', [ApiController::class, 'advancedSearch']);
-    
+
     // Phase 7.2: Date Marketplace Booking Endpoints
     Route::post('book-restaurant', [ApiController::class, 'book_restaurant']);
     Route::post('book-activity', [ApiController::class, 'book_activity']);
@@ -87,11 +82,11 @@ Route::middleware([JwtMiddleware::class])->group(function () {
     Route::get('get-booking-history', [ApiController::class, 'get_booking_history']);
     Route::post('cancel-booking', [ApiController::class, 'cancel_booking']);
     Route::get('get-available-time-slots', [ApiController::class, 'get_available_time_slots']);
-    
+
     // Phase 7.2: Relationship Milestone Gift Suggestions
     Route::get('get-milestone-gift-suggestions', [ApiController::class, 'get_milestone_gift_suggestions']);
     Route::post('save-milestone-reminder', [ApiController::class, 'save_milestone_reminder']);
-    
+
     // Phase 6.2: Chat Safety & Moderation endpoints
     Route::post('analyze-message-safety', [ApiController::class, 'analyzeMessageSafety']);
     Route::post('report-unsafe-behavior', [ApiController::class, 'reportUnsafeBehavior']);
@@ -140,10 +135,9 @@ Route::middleware([JwtMiddleware::class])->group(function () {
     Route::post('moderation/legal-consent', [ModerationController::class, 'updateLegalConsent']);
     Route::post('moderation/update-legal-consent', [ModerationController::class, 'updateLegalConsent']); // Alias
     Route::get('moderation/legal-consent-status', [ModerationController::class, 'getLegalConsentStatus']);
-    
+
     // Admin-only moderation routes
     Route::get('moderation/dashboard', [ModerationController::class, 'getModerationDashboard']);
-    
 });
 
 
@@ -155,79 +149,6 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 });
 
 
-
-//rout for stock-categories
-Route::get('/stock-items', function (Request $request) {
-    $q = $request->get('q');
-
-    $company_id = $request->get('company_id');
-    if ($company_id == null) {
-        return response()->json([
-            'data' => [],
-        ], 400);
-    }
-
-    $sub_categories =
-        StockItem::where('company_id', $company_id)
-        ->where('name', 'like', "%$q%")
-        ->orderBy('name', 'asc')
-        ->limit(20)
-        ->get();
-
-    $data = [];
-
-    foreach ($sub_categories as $sub_category) {
-        $data[] = [
-            'id' => $sub_category->id,
-            'text' => $sub_category->sku . " " . $sub_category->name_text,
-        ];
-    }
-
-    return response()->json([
-        'data' => $data,
-    ]);
-});
-
-
-
-
-//rout for stock-categories
-Route::get('/stock-sub-categories', function (Request $request) {
-    $q = $request->get('q');
-
-    $company_id = $request->get('company_id');
-    if ($company_id == null) {
-        return response()->json([
-            'data' => [],
-        ], 400);
-    }
-
-    $sub_categories =
-        StockSubCategory::where('company_id', $company_id)
-        ->where('name', 'like', "%$q%")
-        ->orderBy('name', 'asc')
-        ->limit(20)
-        ->get();
-
-    $data = [];
-
-    foreach ($sub_categories as $sub_category) {
-        $data[] = [
-            'id' => $sub_category->id,
-            'text' => $sub_category->name_text . " (" . $sub_category->measurement_unit . ")",
-        ];
-    }
-
-    return response()->json([
-        'data' => $data,
-    ]);
-});
-
-// Moderation routes
-Route::middleware([JwtMiddleware::class])->group(function () {
-    Route::post('moderation/stock-item', [ModerationController::class, 'moderateStockItem']);
-    Route::post('moderation/stock-sub-category', [ModerationController::class, 'moderateStockSubCategory']);
-});
 
 // Subscription routes (temporarily without middleware for final testing)
 Route::post('create_subscription_payment', [ApiController::class, 'create_subscription_payment']);

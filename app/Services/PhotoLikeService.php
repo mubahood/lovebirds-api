@@ -26,8 +26,8 @@ class PhotoLikeService
 
         // Check if user has already acted on this profile
         $existingAction = UserLike::where('liker_id', $currentUser->id)
-                                 ->where('liked_user_id', $targetUserId)
-                                 ->first();
+            ->where('liked_user_id', $targetUserId)
+            ->first();
 
         if ($existingAction) {
             throw new \Exception('You have already acted on this profile.');
@@ -63,16 +63,16 @@ class PhotoLikeService
     public function getWhoLikedMe(User $currentUser, $limit = 20)
     {
         $likes = UserLike::where('liked_user_id', $currentUser->id)
-                        ->where('status', 'Active')
-                        ->whereIn('type', ['like', 'super_like'])
-                        ->with('liker')
-                        ->orderBy('created_at', 'desc')
-                        ->limit($limit)
-                        ->get();
+            ->where('status', 'Active')
+            ->whereIn('type', ['like', 'super_like'])
+            ->with('liker')
+            ->orderBy('created_at', 'desc')
+            ->limit($limit)
+            ->get();
 
         return $likes->map(function ($like) {
             $user = $like->liker;
-            
+
             return $this->formatUserForResponse($user, [
                 'like_type' => $like->type,
                 'like_message' => $like->message,
@@ -87,21 +87,21 @@ class PhotoLikeService
      */
     public function getMutualLikes(User $currentUser, $limit = 50)
     {
-        $matches = UserMatch::where(function($query) use ($currentUser) {
+        $matches = UserMatch::where(function ($query) use ($currentUser) {
             $query->where('user_id', $currentUser->id)
-                  ->orWhere('matched_user_id', $currentUser->id);
+                ->orWhere('matched_user_id', $currentUser->id);
         })
-        ->where('status', 'Active')
-        ->with(['user', 'matchedUser'])
-        ->orderBy('created_at', 'desc')
-        ->limit($limit)
-        ->get();
+            ->where('status', 'Active')
+            ->with(['user', 'matchedUser'])
+            ->orderBy('created_at', 'desc')
+            ->limit($limit)
+            ->get();
 
         return $matches->map(function ($match) use ($currentUser) {
-            $otherUser = $match->user_id === $currentUser->id 
-                ? $match->matchedUser 
+            $otherUser = $match->user_id === $currentUser->id
+                ? $match->matchedUser
                 : $match->user;
-                
+
             return $this->formatUserForResponse($otherUser, [
                 'match_id' => $match->id,
                 'matched_at' => $match->created_at,
@@ -116,63 +116,63 @@ class PhotoLikeService
     public function getFilteredMatches(User $currentUser, $filter = 'all', $limit = 50, $page = 1)
     {
         $offset = ($page - 1) * $limit;
-        
-        $query = UserMatch::where(function($q) use ($currentUser) {
+
+        $query = UserMatch::where(function ($q) use ($currentUser) {
             $q->where('user_id', $currentUser->id)
-              ->orWhere('matched_user_id', $currentUser->id);
+                ->orWhere('matched_user_id', $currentUser->id);
         })
-        ->where('status', 'Active')
-        ->with(['user', 'matchedUser']);
+            ->where('status', 'Active')
+            ->with(['user', 'matchedUser']);
 
         // Apply filters
         switch ($filter) {
             case 'new':
                 // Matches from last 24 hours with no messages
                 $query->where('created_at', '>=', now()->subDay())
-                      ->whereNotExists(function($q) use ($currentUser) {
-                          $q->select(DB::raw(1))
+                    ->whereNotExists(function ($q) use ($currentUser) {
+                        $q->select(DB::raw(1))
                             ->from('chat_heads')
                             ->join('chat_messages', 'chat_heads.id', '=', 'chat_messages.chat_head_id')
                             ->where('chat_heads.type', 'dating')
-                            ->where(function($subQ) {
+                            ->where(function ($subQ) {
                                 $subQ->whereRaw('(chat_heads.customer_id = user_matches.user_id AND chat_heads.product_owner_id = user_matches.matched_user_id)')
-                                     ->orWhereRaw('(chat_heads.customer_id = user_matches.matched_user_id AND chat_heads.product_owner_id = user_matches.user_id)');
+                                    ->orWhereRaw('(chat_heads.customer_id = user_matches.matched_user_id AND chat_heads.product_owner_id = user_matches.user_id)');
                             });
-                      });
+                    });
                 break;
-                
+
             case 'messaged':
                 // Matches with existing conversation
-                $query->whereExists(function($q) use ($currentUser) {
+                $query->whereExists(function ($q) use ($currentUser) {
                     $q->select(DB::raw(1))
-                      ->from('chat_heads')
-                      ->join('chat_messages', 'chat_heads.id', '=', 'chat_messages.chat_head_id')
-                      ->where('chat_heads.type', 'dating')
-                      ->where(function($subQ) {
-                          $subQ->whereRaw('(chat_heads.customer_id = user_matches.user_id AND chat_heads.product_owner_id = user_matches.matched_user_id)')
-                               ->orWhereRaw('(chat_heads.customer_id = user_matches.matched_user_id AND chat_heads.product_owner_id = user_matches.user_id)');
-                      });
+                        ->from('chat_heads')
+                        ->join('chat_messages', 'chat_heads.id', '=', 'chat_messages.chat_head_id')
+                        ->where('chat_heads.type', 'dating')
+                        ->where(function ($subQ) {
+                            $subQ->whereRaw('(chat_heads.customer_id = user_matches.user_id AND chat_heads.product_owner_id = user_matches.matched_user_id)')
+                                ->orWhereRaw('(chat_heads.customer_id = user_matches.matched_user_id AND chat_heads.product_owner_id = user_matches.user_id)');
+                        });
                 });
                 break;
-                
+
             case 'recent':
                 // Matches from last 7 days
                 $query->where('created_at', '>=', now()->subDays(7));
                 break;
-                
+
             case 'super_likes':
                 // Matches that came from super likes
-                $query->whereExists(function($q) {
+                $query->whereExists(function ($q) {
                     $q->select(DB::raw(1))
-                      ->from('user_likes')
-                      ->where('user_likes.type', 'super_like')
-                      ->where(function($subQ) {
-                          $subQ->whereRaw('(user_likes.liker_id = user_matches.user_id AND user_likes.liked_user_id = user_matches.matched_user_id)')
-                               ->orWhereRaw('(user_likes.liker_id = user_matches.matched_user_id AND user_likes.liked_user_id = user_matches.user_id)');
-                      });
+                        ->from('user_likes')
+                        ->where('user_likes.type', 'super_like')
+                        ->where(function ($subQ) {
+                            $subQ->whereRaw('(user_likes.liker_id = user_matches.user_id AND user_likes.liked_user_id = user_matches.matched_user_id)')
+                                ->orWhereRaw('(user_likes.liker_id = user_matches.matched_user_id AND user_likes.liked_user_id = user_matches.user_id)');
+                        });
                 });
                 break;
-                
+
             default: // 'all'
                 // No additional filtering
                 break;
@@ -180,26 +180,26 @@ class PhotoLikeService
 
         $totalQuery = clone $query;
         $total = $totalQuery->count();
-        
+
         $matches = $query->orderBy('created_at', 'desc')
-                        ->offset($offset)
-                        ->limit($limit)
-                        ->get();
+            ->offset($offset)
+            ->limit($limit)
+            ->get();
 
         $formattedMatches = $matches->map(function ($match) use ($currentUser) {
-            $otherUser = $match->user_id === $currentUser->id 
-                ? $match->matchedUser 
+            $otherUser = $match->user_id === $currentUser->id
+                ? $match->matchedUser
                 : $match->user;
 
             // Get chat head for this match
             $chatHead = ChatHead::where('match_id', $match->id)->first();
             $hasMessage = $chatHead && $chatHead->messages()->exists();
             $lastMessage = $hasMessage ? $chatHead->messages()->latest()->first() : null;
-            
+
             // Determine match type based on the like that created the match
-            $userLike = UserLike::where(function($q) use ($currentUser, $otherUser) {
+            $userLike = UserLike::where(function ($q) use ($currentUser, $otherUser) {
                 $q->where('liker_id', $currentUser->id)->where('liked_user_id', $otherUser->id);
-            })->orWhere(function($q) use ($currentUser, $otherUser) {
+            })->orWhere(function ($q) use ($currentUser, $otherUser) {
                 $q->where('liker_id', $otherUser->id)->where('liked_user_id', $currentUser->id);
             })->whereIn('type', ['like', 'super_like'])->first();
 
@@ -226,44 +226,44 @@ class PhotoLikeService
      */
     public function getMatchFilterCounts(User $currentUser)
     {
-        $baseQuery = UserMatch::where(function($q) use ($currentUser) {
+        $baseQuery = UserMatch::where(function ($q) use ($currentUser) {
             $q->where('user_id', $currentUser->id)
-              ->orWhere('matched_user_id', $currentUser->id);
+                ->orWhere('matched_user_id', $currentUser->id);
         })->where('status', 'Active');
 
         return [
             'all' => (clone $baseQuery)->count(),
             'new' => (clone $baseQuery)->where('created_at', '>=', now()->subDay())
-                                     ->whereNotExists(function($q) use ($currentUser) {
-                                         $q->select(DB::raw(1))
-                                           ->from('chat_heads')
-                                           ->join('chat_messages', 'chat_heads.id', '=', 'chat_messages.chat_head_id')
-                                           ->where('chat_heads.type', 'dating')
-                                           ->where(function($subQ) {
-                                               $subQ->whereRaw('(chat_heads.customer_id = user_matches.user_id AND chat_heads.product_owner_id = user_matches.matched_user_id)')
-                                                    ->orWhereRaw('(chat_heads.customer_id = user_matches.matched_user_id AND chat_heads.product_owner_id = user_matches.user_id)');
-                                           });
-                                     })->count(),
-            'messaged' => (clone $baseQuery)->whereExists(function($q) use ($currentUser) {
-                              $q->select(DB::raw(1))
-                                ->from('chat_heads')
-                                ->join('chat_messages', 'chat_heads.id', '=', 'chat_messages.chat_head_id')
-                                ->where('chat_heads.type', 'dating')
-                                ->where(function($subQ) {
-                                    $subQ->whereRaw('(chat_heads.customer_id = user_matches.user_id AND chat_heads.product_owner_id = user_matches.matched_user_id)')
-                                         ->orWhereRaw('(chat_heads.customer_id = user_matches.matched_user_id AND chat_heads.product_owner_id = user_matches.user_id)');
-                                });
-                          })->count(),
+                ->whereNotExists(function ($q) use ($currentUser) {
+                    $q->select(DB::raw(1))
+                        ->from('chat_heads')
+                        ->join('chat_messages', 'chat_heads.id', '=', 'chat_messages.chat_head_id')
+                        ->where('chat_heads.type', 'dating')
+                        ->where(function ($subQ) {
+                            $subQ->whereRaw('(chat_heads.customer_id = user_matches.user_id AND chat_heads.product_owner_id = user_matches.matched_user_id)')
+                                ->orWhereRaw('(chat_heads.customer_id = user_matches.matched_user_id AND chat_heads.product_owner_id = user_matches.user_id)');
+                        });
+                })->count(),
+            'messaged' => (clone $baseQuery)->whereExists(function ($q) use ($currentUser) {
+                $q->select(DB::raw(1))
+                    ->from('chat_heads')
+                    ->join('chat_messages', 'chat_heads.id', '=', 'chat_messages.chat_head_id')
+                    ->where('chat_heads.type', 'dating')
+                    ->where(function ($subQ) {
+                        $subQ->whereRaw('(chat_heads.customer_id = user_matches.user_id AND chat_heads.product_owner_id = user_matches.matched_user_id)')
+                            ->orWhereRaw('(chat_heads.customer_id = user_matches.matched_user_id AND chat_heads.product_owner_id = user_matches.user_id)');
+                    });
+            })->count(),
             'recent' => (clone $baseQuery)->where('created_at', '>=', now()->subDays(7))->count(),
-            'super_likes' => (clone $baseQuery)->whereExists(function($q) {
-                                $q->select(DB::raw(1))
-                                  ->from('user_likes')
-                                  ->where('user_likes.type', 'super_like')
-                                  ->where(function($subQ) {
-                                      $subQ->whereRaw('(user_likes.liker_id = user_matches.user_id AND user_likes.liked_user_id = user_matches.matched_user_id)')
-                                           ->orWhereRaw('(user_likes.liker_id = user_matches.matched_user_id AND user_likes.liked_user_id = user_matches.user_id)');
-                                  });
-                            })->count(),
+            'super_likes' => (clone $baseQuery)->whereExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('user_likes')
+                    ->where('user_likes.type', 'super_like')
+                    ->where(function ($subQ) {
+                        $subQ->whereRaw('(user_likes.liker_id = user_matches.user_id AND user_likes.liked_user_id = user_matches.matched_user_id)')
+                            ->orWhereRaw('(user_likes.liker_id = user_matches.matched_user_id AND user_likes.liked_user_id = user_matches.user_id)');
+                    });
+            })->count(),
         ];
     }
 
@@ -273,13 +273,13 @@ class PhotoLikeService
     public function undoLastSwipe(User $currentUser)
     {
         if (!$currentUser->hasActiveSubscription()) {
-            throw new \Exception('Undo feature requires an active subscription.');
+            throw new \Exception('Undo feature requires an active subscription!');
         }
 
         $lastSwipe = UserLike::where('liker_id', $currentUser->id)
-                           ->where('status', 'Active')
-                           ->orderBy('created_at', 'desc')
-                           ->first();
+            ->where('status', 'Active')
+            ->orderBy('created_at', 'desc')
+            ->first();
 
         if (!$lastSwipe) {
             throw new \Exception('No recent swipe to undo.');
@@ -292,18 +292,18 @@ class PhotoLikeService
 
         // If it was a match, remove the match
         if ($lastSwipe->is_mutual === 'Yes') {
-            UserMatch::where(function($query) use ($lastSwipe) {
+            UserMatch::where(function ($query) use ($lastSwipe) {
                 $query->where('user_id', $lastSwipe->liker_id)
-                      ->where('matched_user_id', $lastSwipe->liked_user_id);
-            })->orWhere(function($query) use ($lastSwipe) {
+                    ->where('matched_user_id', $lastSwipe->liked_user_id);
+            })->orWhere(function ($query) use ($lastSwipe) {
                 $query->where('user_id', $lastSwipe->liked_user_id)
-                      ->where('matched_user_id', $lastSwipe->liker_id);
+                    ->where('matched_user_id', $lastSwipe->liker_id);
             })->delete();
 
             // Update mutual like flag on both sides
             UserLike::where('liker_id', $lastSwipe->liked_user_id)
-                   ->where('liked_user_id', $lastSwipe->liker_id)
-                   ->update(['is_mutual' => 'No']);
+                ->where('liked_user_id', $lastSwipe->liker_id)
+                ->update(['is_mutual' => 'No']);
         }
 
         // Delete the swipe record
@@ -324,35 +324,35 @@ class PhotoLikeService
     {
         $stats = [
             'total_likes_sent' => UserLike::where('liker_id', $currentUser->id)
-                                        ->whereIn('type', ['like', 'super_like'])
-                                        ->where('status', 'Active')
-                                        ->count(),
-            
+                ->whereIn('type', ['like', 'super_like'])
+                ->where('status', 'Active')
+                ->count(),
+
             'total_likes_received' => UserLike::where('liked_user_id', $currentUser->id)
-                                            ->whereIn('type', ['like', 'super_like'])
-                                            ->where('status', 'Active')
-                                            ->count(),
-            
+                ->whereIn('type', ['like', 'super_like'])
+                ->where('status', 'Active')
+                ->count(),
+
             'total_passes' => UserLike::where('liker_id', $currentUser->id)
-                                    ->where('type', 'pass')
-                                    ->where('status', 'Active')
-                                    ->count(),
-            
-            'total_matches' => UserMatch::where(function($query) use ($currentUser) {
-                                    $query->where('user_id', $currentUser->id)
-                                          ->orWhere('matched_user_id', $currentUser->id);
-                                })
-                                ->where('status', 'Active')
-                                ->count(),
-            
+                ->where('type', 'pass')
+                ->where('status', 'Active')
+                ->count(),
+
+            'total_matches' => UserMatch::where(function ($query) use ($currentUser) {
+                $query->where('user_id', $currentUser->id)
+                    ->orWhere('matched_user_id', $currentUser->id);
+            })
+                ->where('status', 'Active')
+                ->count(),
+
             'super_likes_sent' => UserLike::where('liker_id', $currentUser->id)
-                                        ->where('type', 'super_like')
-                                        ->where('status', 'Active')
-                                        ->count(),
-            
+                ->where('type', 'super_like')
+                ->where('status', 'Active')
+                ->count(),
+
             'daily_likes_used' => $this->getDailyLikesUsed($currentUser),
             'daily_likes_remaining' => $this->getRemainingDailyLikes($currentUser),
-            
+
             'match_rate' => $this->calculateMatchRate($currentUser)
         ];
 
@@ -366,55 +366,55 @@ class PhotoLikeService
     {
         // Get profile views (simulated based on likes received - you'd want real view tracking)
         $profileViews = UserLike::where('liked_user_id', $currentUser->id)
-                               ->where('status', 'Active')
-                               ->count() * 3; // Estimated 3:1 view to like ratio
+            ->where('status', 'Active')
+            ->count() * 3; // Estimated 3:1 view to like ratio
 
         // Get weekly stats
         $weekStart = now()->startOfWeek();
         $weeklyLikesReceived = UserLike::where('liked_user_id', $currentUser->id)
-                                     ->whereIn('type', ['like', 'super_like'])
-                                     ->where('status', 'Active')
-                                     ->where('created_at', '>=', $weekStart)
-                                     ->count();
+            ->whereIn('type', ['like', 'super_like'])
+            ->where('status', 'Active')
+            ->where('created_at', '>=', $weekStart)
+            ->count();
 
-        $weeklyMatches = UserMatch::where(function($query) use ($currentUser) {
-                                    $query->where('user_id', $currentUser->id)
-                                          ->orWhere('matched_user_id', $currentUser->id);
-                                })
-                                ->where('status', 'Active')
-                                ->where('created_at', '>=', $weekStart)
-                                ->count();
+        $weeklyMatches = UserMatch::where(function ($query) use ($currentUser) {
+            $query->where('user_id', $currentUser->id)
+                ->orWhere('matched_user_id', $currentUser->id);
+        })
+            ->where('status', 'Active')
+            ->where('created_at', '>=', $weekStart)
+            ->count();
 
         // Get monthly stats
         $monthStart = now()->startOfMonth();
         $monthlyLikesReceived = UserLike::where('liked_user_id', $currentUser->id)
-                                       ->whereIn('type', ['like', 'super_like'])
-                                       ->where('status', 'Active')
-                                       ->where('created_at', '>=', $monthStart)
-                                       ->count();
+            ->whereIn('type', ['like', 'super_like'])
+            ->where('status', 'Active')
+            ->where('created_at', '>=', $monthStart)
+            ->count();
 
-        $monthlyMatches = UserMatch::where(function($query) use ($currentUser) {
-                                    $query->where('user_id', $currentUser->id)
-                                          ->orWhere('matched_user_id', $currentUser->id);
-                                })
-                                ->where('status', 'Active')
-                                ->where('created_at', '>=', $monthStart)
-                                ->count();
+        $monthlyMatches = UserMatch::where(function ($query) use ($currentUser) {
+            $query->where('user_id', $currentUser->id)
+                ->orWhere('matched_user_id', $currentUser->id);
+        })
+            ->where('status', 'Active')
+            ->where('created_at', '>=', $monthStart)
+            ->count();
 
         // Calculate profile completion
         $profileCompletion = $this->calculateProfileCompletion($currentUser);
 
         // Get like distribution by hour (for optimal posting times)
         $likesByHour = UserLike::where('liked_user_id', $currentUser->id)
-                              ->whereIn('type', ['like', 'super_like'])
-                              ->where('status', 'Active')
-                              ->where('created_at', '>=', now()->subDays(30))
-                              ->selectRaw('HOUR(created_at) as hour, COUNT(*) as count')
-                              ->groupBy('hour')
-                              ->orderBy('hour')
-                              ->get()
-                              ->pluck('count', 'hour')
-                              ->toArray();
+            ->whereIn('type', ['like', 'super_like'])
+            ->where('status', 'Active')
+            ->where('created_at', '>=', now()->subDays(30))
+            ->selectRaw('HOUR(created_at) as hour, COUNT(*) as count')
+            ->groupBy('hour')
+            ->orderBy('hour')
+            ->get()
+            ->pluck('count', 'hour')
+            ->toArray();
 
         return [
             'profile_views' => $profileViews,
@@ -471,23 +471,23 @@ class PhotoLikeService
     private function getPopularityTrend(User $currentUser)
     {
         $dailyLikes = UserLike::where('liked_user_id', $currentUser->id)
-                            ->whereIn('type', ['like', 'super_like'])
-                            ->where('status', 'Active')
-                            ->where('created_at', '>=', now()->subDays(7))
-                            ->selectRaw('DATE(created_at) as date, COUNT(*) as count')
-                            ->groupBy('date')
-                            ->orderBy('date')
-                            ->get()
-                            ->pluck('count', 'date')
-                            ->toArray();
+            ->whereIn('type', ['like', 'super_like'])
+            ->where('status', 'Active')
+            ->where('created_at', '>=', now()->subDays(7))
+            ->selectRaw('DATE(created_at) as date, COUNT(*) as count')
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get()
+            ->pluck('count', 'date')
+            ->toArray();
 
         $trend = 'stable';
         $values = array_values($dailyLikes);
-        
+
         if (count($values) >= 3) {
             $recent = array_sum(array_slice($values, -3)) / 3;
             $older = array_sum(array_slice($values, 0, 3)) / 3;
-            
+
             if ($recent > $older * 1.2) {
                 $trend = 'increasing';
             } elseif ($recent < $older * 0.8) {
@@ -529,12 +529,12 @@ class PhotoLikeService
         }
 
         // Check if user has few matches
-        $totalMatches = UserMatch::where(function($query) use ($currentUser) {
-                                    $query->where('user_id', $currentUser->id)
-                                          ->orWhere('matched_user_id', $currentUser->id);
-                                })
-                                ->where('status', 'Active')
-                                ->count();
+        $totalMatches = UserMatch::where(function ($query) use ($currentUser) {
+            $query->where('user_id', $currentUser->id)
+                ->orWhere('matched_user_id', $currentUser->id);
+        })
+            ->where('status', 'Active')
+            ->count();
 
         if ($totalMatches < 5) {
             $recommendations[] = [
@@ -553,21 +553,21 @@ class PhotoLikeService
     public function blockAndCleanup(User $currentUser, $targetUserId)
     {
         // Remove all likes between users
-        UserLike::where(function($query) use ($currentUser, $targetUserId) {
+        UserLike::where(function ($query) use ($currentUser, $targetUserId) {
             $query->where('liker_id', $currentUser->id)
-                  ->where('liked_user_id', $targetUserId);
-        })->orWhere(function($query) use ($currentUser, $targetUserId) {
+                ->where('liked_user_id', $targetUserId);
+        })->orWhere(function ($query) use ($currentUser, $targetUserId) {
             $query->where('liker_id', $targetUserId)
-                  ->where('liked_user_id', $currentUser->id);
+                ->where('liked_user_id', $currentUser->id);
         })->delete();
 
         // Remove any matches
-        UserMatch::where(function($query) use ($currentUser, $targetUserId) {
+        UserMatch::where(function ($query) use ($currentUser, $targetUserId) {
             $query->where('user_id', $currentUser->id)
-                  ->where('matched_user_id', $targetUserId);
-        })->orWhere(function($query) use ($currentUser, $targetUserId) {
+                ->where('matched_user_id', $targetUserId);
+        })->orWhere(function ($query) use ($currentUser, $targetUserId) {
             $query->where('user_id', $targetUserId)
-                  ->where('matched_user_id', $currentUser->id);
+                ->where('matched_user_id', $currentUser->id);
         })->delete();
 
         return true;
@@ -589,8 +589,8 @@ class PhotoLikeService
     private function getDailyLikesUsed(User $currentUser, $specificType = null)
     {
         $query = UserLike::where('liker_id', $currentUser->id)
-                        ->where('status', 'Active')
-                        ->where('created_at', '>=', now()->startOfDay());
+            ->where('status', 'Active')
+            ->where('created_at', '>=', now()->startOfDay());
 
         if ($specificType) {
             $query->where('type', $specificType);
@@ -632,10 +632,10 @@ class PhotoLikeService
     private function checkForMatch(User $currentUser, User $targetUser, UserLike $userLike)
     {
         $mutualLike = UserLike::where('liker_id', $targetUser->id)
-                            ->where('liked_user_id', $currentUser->id)
-                            ->whereIn('type', ['like', 'super_like'])
-                            ->where('status', 'Active')
-                            ->first();
+            ->where('liked_user_id', $currentUser->id)
+            ->whereIn('type', ['like', 'super_like'])
+            ->where('status', 'Active')
+            ->first();
 
         if ($mutualLike) {
             // Mark both likes as mutual
@@ -695,20 +695,20 @@ class PhotoLikeService
     private function calculateMatchRate(User $currentUser)
     {
         $totalLikes = UserLike::where('liker_id', $currentUser->id)
-                            ->whereIn('type', ['like', 'super_like'])
-                            ->where('status', 'Active')
-                            ->count();
+            ->whereIn('type', ['like', 'super_like'])
+            ->where('status', 'Active')
+            ->count();
 
         if ($totalLikes === 0) {
             return 0;
         }
 
-        $totalMatches = UserMatch::where(function($query) use ($currentUser) {
-                                    $query->where('user_id', $currentUser->id)
-                                          ->orWhere('matched_user_id', $currentUser->id);
-                                })
-                                ->where('status', 'Active')
-                                ->count();
+        $totalMatches = UserMatch::where(function ($query) use ($currentUser) {
+            $query->where('user_id', $currentUser->id)
+                ->orWhere('matched_user_id', $currentUser->id);
+        })
+            ->where('status', 'Active')
+            ->count();
 
         return round(($totalMatches / $totalLikes) * 100, 1);
     }
@@ -717,17 +717,22 @@ class PhotoLikeService
     {
         // Convert to array to avoid model modification
         $userData = $user->toArray();
-        
+
         // Remove sensitive information
-        unset($userData['email'], $userData['phone_number'], $userData['password'], 
-              $userData['verification_code'], $userData['remember_token']);
+        unset(
+            $userData['email'],
+            $userData['phone_number'],
+            $userData['password'],
+            $userData['verification_code'],
+            $userData['remember_token']
+        );
 
         // Add computed attributes
         $userData['age'] = $user->age;
         $userData['primary_photo'] = $user->primary_photo;
         $userData['profile_completion'] = $user->profile_completion;
         $userData['is_online'] = $user->online_status === 'Online';
-        
+
         // Merge any extra data
         return array_merge($userData, $extraData);
     }

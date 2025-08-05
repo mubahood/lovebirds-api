@@ -6,8 +6,6 @@ use App\Models\ChatHead;
 use App\Models\ChatMessage;
 use App\Models\Company;
 use App\Models\Image;
-use App\Models\MovieModel;
-use App\Models\MovieView;
 use App\Models\Product;
 use App\Models\ProductCategory;
 use App\Models\StockSubCategory;
@@ -345,37 +343,37 @@ class ApiController extends BaseController
         // For dating chats, verify that users are matched
         if (!isset($r->product_id) || $r->product_id == null) {
             // This is a dating chat - check if users are matched
-            $match = \App\Models\UserMatch::where(function($query) use ($sender, $receiver) {
+            /* $match = \App\Models\UserMatch::where(function ($query) use ($sender, $receiver) {
                 $query->where('user_id', $sender->id)
-                      ->where('matched_user_id', $receiver->id);
-            })->orWhere(function($query) use ($sender, $receiver) {
+                    ->where('matched_user_id', $receiver->id);
+            })->orWhere(function ($query) use ($sender, $receiver) {
                 $query->where('user_id', $receiver->id)
-                      ->where('matched_user_id', $sender->id);
+                    ->where('matched_user_id', $sender->id);
             })->where('status', 'active')->first();
-            
+
             if (!$match) {
                 return $this->error('Users must be matched before starting a conversation.');
-            }
-            
+            } 
+ */
             // Check if either user has blocked the other
-            $isBlocked = \App\Models\UserBlock::where(function($query) use ($sender, $receiver) {
+            $isBlocked = \App\Models\UserBlock::where(function ($query) use ($sender, $receiver) {
                 $query->where('blocker_id', $sender->id)
-                      ->where('blocked_id', $receiver->id);
-            })->orWhere(function($query) use ($sender, $receiver) {
+                    ->where('blocked_user_id', $receiver->id);
+            })->orWhere(function ($query) use ($sender, $receiver) {
                 $query->where('blocker_id', $receiver->id)
-                      ->where('blocked_id', $sender->id);
+                    ->where('blocked_user_id', $sender->id);
             })->exists();
-            
+
             if ($isBlocked) {
                 return $this->error('Cannot start conversation with blocked user.');
             }
-            
+
             // Use the enhanced dating chat creation method
-            $chat_head = ChatHead::createDatingChat($sender->id, $receiver->id, $match->id);
+            $chat_head = ChatHead::createDatingChat($sender->id, $receiver->id, null);
             if (!$chat_head) {
                 return $this->error('Failed to create chat.');
             }
-            
+
             return $this->success($chat_head, 'Dating chat started successfully.');
         }
 
@@ -656,9 +654,44 @@ class ApiController extends BaseController
             return $this->error('Receiver not found.');
         }
 
-        $chat_head = ChatHead::find($r->chat_head_id);
+        // Try to find existing chat head first
+        $chat_head = null;
+        if ($r->chat_head_id) {
+            $chat_head = ChatHead::find($r->chat_head_id);
+        }
+
+        // If no chat_head_id provided or chat head not found, find or create one
         if ($chat_head == null) {
-            return $this->error('Chat head not found.');
+            // Look for existing chat between these users
+            $chat_head = ChatHead::where(function ($query) use ($sender, $receiver) {
+                $query->where('customer_id', $sender->id)
+                    ->where('product_owner_id', $receiver->id);
+            })->orWhere(function ($query) use ($sender, $receiver) {
+                $query->where('customer_id', $receiver->id)
+                    ->where('product_owner_id', $sender->id);
+            })->where('type', 'dating')->first();
+
+            // If still no chat head found, create a new one
+            if ($chat_head == null) {
+                // Check if either user has blocked the other
+                $isBlocked = \App\Models\UserBlock::where(function ($query) use ($sender, $receiver) {
+                    $query->where('blocker_id', $sender->id)
+                        ->where('blocked_user_id', $receiver->id);
+                })->orWhere(function ($query) use ($sender, $receiver) {
+                    $query->where('blocker_id', $receiver->id)
+                        ->where('blocked_user_id', $sender->id);
+                })->exists();
+
+                if ($isBlocked) {
+                    return $this->error('Cannot send message to blocked user.');
+                }
+
+                // Create new chat head for dating conversation
+                $chat_head = ChatHead::createDatingChat($sender->id, $receiver->id, null);
+                if (!$chat_head) {
+                    return $this->error('Failed to create chat.');
+                }
+            }
         }
 
         // Check if chat is blocked
@@ -667,9 +700,9 @@ class ApiController extends BaseController
         }
 
         // Validate message type and content
-        $message_type = $r->type ?? 'text';
+        $message_type = $r->message_type ?? $r->type ?? 'text';
         $allowed_types = ['text', 'photo', 'video', 'audio', 'document', 'location'];
-        
+
         if (!in_array($message_type, $allowed_types)) {
             return $this->error('Invalid message type.');
         }
@@ -685,67 +718,113 @@ class ApiController extends BaseController
         $chat_message->type = $message_type;
         $chat_message->status = 'sent';
         $chat_message->delivery_status = 'sent';
-        
-        // Handle different message types
+
+        // Handle different message types using Utils::upload_images_2 for single file uploads
         switch ($message_type) {
             case 'text':
-                $chat_message->body = $r->body;
+                // Support both 'content' (mobile app) and 'body' (legacy) fields
+                $chat_message->body = $r->content ?? $r->body ?? '';
                 if (empty($chat_message->body)) {
-                    return $this->error('Message body is required for text messages.');
+                    return $this->error('Message content is required for text messages.');
                 }
                 break;
-                
+
             case 'photo':
-                $chat_message->photo = $r->photo;
-                $chat_message->body = $r->body ?? ''; // Optional caption
+                // Handle photo file upload using Utils::upload_images_2 or accept previewed file
+                if (isset($_FILES['photo']) && !empty($_FILES['photo']['name'])) {
+                    // Direct upload (for backward compatibility)
+                    $uploaded_file = Utils::upload_images_2([$_FILES['photo']], true);
+                    if (empty($uploaded_file)) {
+                        return $this->error('Failed to upload photo file.');
+                    }
+                    $chat_message->photo = $uploaded_file;
+                } else if (!empty($r->preview_file_name)) {
+                    // Use previewed file
+                    $chat_message->photo = $r->preview_file_name;
+                } else {
+                    return $this->error('Photo file is required for photo messages.');
+                }
+                
+                $chat_message->body = $r->content ?? $r->body ?? ''; // Optional caption
                 $chat_message->media_size = $r->media_size;
                 $chat_message->media_thumbnail = $r->thumbnail;
-                if (empty($chat_message->photo)) {
-                    return $this->error('Photo is required for photo messages.');
-                }
                 break;
-                
+
             case 'video':
-                $chat_message->video = $r->video;
-                $chat_message->body = $r->body ?? ''; // Optional caption
+                // Handle video file upload using Utils::upload_images_2 or accept previewed file
+                if (isset($_FILES['video']) && !empty($_FILES['video']['name'])) {
+                    // Direct upload (for backward compatibility)
+                    $uploaded_file = Utils::upload_images_2([$_FILES['video']], true);
+                    if (empty($uploaded_file)) {
+                        return $this->error('Failed to upload video file.');
+                    }
+                    $chat_message->video = $uploaded_file;
+                } else if (!empty($r->preview_file_name)) {
+                    // Use previewed file
+                    $chat_message->video = $r->preview_file_name;
+                } else {
+                    return $this->error('Video file is required for video messages.');
+                }
+                
+                $chat_message->body = $r->content ?? $r->body ?? ''; // Optional caption
                 $chat_message->media_duration = $r->duration;
                 $chat_message->media_size = $r->media_size;
                 $chat_message->media_thumbnail = $r->thumbnail;
-                if (empty($chat_message->video)) {
-                    return $this->error('Video is required for video messages.');
-                }
                 break;
-                
+
             case 'audio':
-                $chat_message->audio = $r->audio;
-                $chat_message->media_duration = $r->duration;
-                $chat_message->media_size = $r->media_size;
-                if (empty($chat_message->audio)) {
+                // Handle audio file upload using Utils::upload_images_2 or accept previewed file
+                if (isset($_FILES['audio']) && !empty($_FILES['audio']['name'])) {
+                    // Direct upload (for backward compatibility)
+                    $uploaded_file = Utils::upload_images_2([$_FILES['audio']], true);
+                    if (empty($uploaded_file)) {
+                        return $this->error('Failed to upload audio file.');
+                    }
+                    $chat_message->audio = $uploaded_file;
+                } else if (!empty($r->preview_file_name)) {
+                    // Use previewed file
+                    $chat_message->audio = $r->preview_file_name;
+                } else {
                     return $this->error('Audio file is required for audio messages.');
                 }
-                break;
                 
+                $chat_message->body = 'Voice message'; // Default body for audio
+                $chat_message->media_duration = $r->duration;
+                $chat_message->media_size = $r->media_size;
+                break;
+
             case 'document':
-                $chat_message->document = $r->document;
+                // Handle document file upload using Utils::upload_images_2 or accept previewed file
+                if (isset($_FILES['document']) && !empty($_FILES['document']['name'])) {
+                    // Direct upload (for backward compatibility)
+                    $uploaded_file = Utils::upload_images_2([$_FILES['document']], true);
+                    if (empty($uploaded_file)) {
+                        return $this->error('Failed to upload document file.');
+                    }
+                    $chat_message->document = $uploaded_file;
+                } else if (!empty($r->preview_file_name)) {
+                    // Use previewed file
+                    $chat_message->document = $r->preview_file_name;
+                } else {
+                    return $this->error('Document file is required for document messages.');
+                }
+                
                 $chat_message->body = $r->filename ?? 'Document'; // Document name
                 $chat_message->media_size = $r->media_size;
-                if (empty($chat_message->document)) {
-                    return $this->error('Document is required for document messages.');
-                }
                 break;
-                
+
             case 'location':
                 $chat_message->latitude = $r->latitude;
                 $chat_message->longitude = $r->longitude;
                 $chat_message->location_name = $r->location_name ?? 'Location';
                 $chat_message->location_address = $r->address ?? '';
-                $chat_message->body = $chat_message->location_name;
+                $chat_message->body = $r->content ?? $chat_message->location_name;
                 if (empty($chat_message->latitude) || empty($chat_message->longitude)) {
                     return $this->error('Latitude and longitude are required for location messages.');
                 }
                 break;
         }
-        
+
         // Handle reply to message
         if (isset($r->reply_to_message_id) && $r->reply_to_message_id) {
             $replyMessage = ChatMessage::find($r->reply_to_message_id);
@@ -753,18 +832,24 @@ class ApiController extends BaseController
                 $chat_message->reply_to_message_id = $r->reply_to_message_id;
             }
         }
-        
+
         // Handle forward
         if (isset($r->is_forwarded) && $r->is_forwarded) {
             $chat_message->is_forwarded = 'Yes';
         }
-        
+
         // Save the message
         $chat_message->save();
-        
+
+        // Update ChatHead with last message information
+        $chat_head->last_message_body = $chat_message->body ?? 'Media message';
+        $chat_head->last_message_time = now();
+        $chat_head->last_message_status = 'sent';
+        $chat_head->save();
+
         // Load the complete message with relationships
         $chat_message = ChatMessage::with(['sender', 'receiver', 'replyToMessage'])->find($chat_message->id);
-        
+
         return $this->success($chat_message, 'Message sent successfully.');
     }
 
@@ -778,6 +863,67 @@ class ApiController extends BaseController
         Utils::success([
             'file_name' => $path,
         ], "File uploaded successfully.");
+    }
+
+    /**
+     * Upload multimedia file for preview before sending in chat
+     */
+    public function upload_media_preview(Request $r)
+    {
+        $user = Utils::get_user($r);
+        if (!$user) {
+            return $this->error('User not authenticated.');
+        }
+
+        // Validate media file
+        $mediaType = $r->media_type ?? 'photo'; // photo, video, audio, document
+        $allowedTypes = ['photo', 'video', 'audio', 'document'];
+        
+        if (!in_array($mediaType, $allowedTypes)) {
+            return $this->error('Invalid media type. Allowed: ' . implode(', ', $allowedTypes));
+        }
+
+        // Check for file based on media type
+        $fileKey = $mediaType;
+        if (!isset($_FILES[$fileKey]) || empty($_FILES[$fileKey]['name'])) {
+            return $this->error(ucfirst($mediaType) . ' file is required.');
+        }
+
+        // Upload the file using Utils::upload_images_2 for single file
+        $uploaded_file = Utils::upload_images_2([$_FILES[$fileKey]], true);
+        if (empty($uploaded_file)) {
+            return $this->error('Failed to upload ' . $mediaType . ' file.');
+        }
+
+        // Get file information
+        $file_path = Utils::docs_root() . '/storage/images/' . $uploaded_file;
+        $file_size = file_exists($file_path) ? filesize($file_path) : 0;
+        $file_url = url('storage/images/' . $uploaded_file);
+
+        // Generate thumbnail for videos and images
+        $thumbnail_url = null;
+        if (in_array($mediaType, ['photo', 'video'])) {
+            $thumbnail_url = $file_url; // For photos, use the same URL
+            // For videos, you might want to generate actual thumbnails later
+        }
+
+        // Get duration for audio/video files (basic implementation)
+        $duration = null;
+        if (in_array($mediaType, ['audio', 'video'])) {
+            // You can implement ffmpeg or getID3 library for accurate duration
+            $duration = $r->duration ?? null; // Accept from frontend for now
+        }
+
+        return $this->success([
+            'media_type' => $mediaType,
+            'file_name' => $uploaded_file,
+            'file_url' => $file_url,
+            'file_size' => $file_size,
+            'thumbnail_url' => $thumbnail_url,
+            'duration' => $duration,
+            'preview_ready' => true,
+            'expires_at' => now()->addHours(2)->toISOString() // Preview expires in 2 hours
+        ], ucfirst($mediaType) . ' uploaded successfully. Ready for preview.');
     }
 
     // ======= PROFILE PHOTO MANAGEMENT ENDPOINTS =======
@@ -844,7 +990,7 @@ class ApiController extends BaseController
         $currentPhotos = $user->profile_photos ?: [];
 
         // Remove the photo from array
-        $currentPhotos = array_filter($currentPhotos, function($photo) use ($photoToDelete) {
+        $currentPhotos = array_filter($currentPhotos, function ($photo) use ($photoToDelete) {
             return $photo !== $photoToDelete;
         });
 
@@ -883,9 +1029,11 @@ class ApiController extends BaseController
         $currentPhotos = $user->profile_photos ?: [];
 
         // Validate new order contains same photos
-        if (count($newOrder) !== count($currentPhotos) || 
-            array_diff($newOrder, $currentPhotos) || 
-            array_diff($currentPhotos, $newOrder)) {
+        if (
+            count($newOrder) !== count($currentPhotos) ||
+            array_diff($newOrder, $currentPhotos) ||
+            array_diff($currentPhotos, $newOrder)
+        ) {
             Utils::error("Invalid photo order provided.");
         }
 
@@ -1028,7 +1176,7 @@ class ApiController extends BaseController
         // Also create a global user block record
         \App\Models\UserBlock::firstOrCreate([
             'blocker_id' => $user->id,
-            'blocked_id' => $blocked_user_id
+            'blocked_user_id' => $blocked_user_id
         ], [
             'reason' => $r->reason ?? 'User blocked in chat',
             'blocked_at' => now()
@@ -1059,8 +1207,8 @@ class ApiController extends BaseController
 
         // Also remove global user block record
         \App\Models\UserBlock::where('blocker_id', $user->id)
-                            ->where('blocked_id', $r->blocked_user_id)
-                            ->delete();
+            ->where('blocked_user_id', $r->blocked_user_id)
+            ->delete();
 
         return $this->success([
             'chat_head_id' => $chat_head->id
@@ -1097,10 +1245,20 @@ class ApiController extends BaseController
         }
 
         $media_files = $query->orderBy('created_at', 'desc')
-                           ->take(50)
-                           ->get(['id', 'type', 'photo', 'video', 'audio', 'document', 
-                                 'media_thumbnail', 'media_size', 'media_duration', 
-                                 'body', 'created_at']);
+            ->take(50)
+            ->get([
+                'id',
+                'type',
+                'photo',
+                'video',
+                'audio',
+                'document',
+                'media_thumbnail',
+                'media_size',
+                'media_duration',
+                'body',
+                'created_at'
+            ]);
 
         return $this->success($media_files, 'Media files retrieved successfully.');
     }
@@ -1131,11 +1289,11 @@ class ApiController extends BaseController
         }
 
         $messages = ChatMessage::where('chat_head_id', $chat_head->id)
-                              ->where('type', 'text')
-                              ->where('body', 'LIKE', "%{$search_term}%")
-                              ->orderBy('created_at', 'desc')
-                              ->take(20)
-                              ->get();
+            ->where('type', 'text')
+            ->where('body', 'LIKE', "%{$search_term}%")
+            ->orderBy('created_at', 'desc')
+            ->take(20)
+            ->get();
 
         return $this->success($messages, 'Search results retrieved successfully.');
     }
@@ -1186,7 +1344,7 @@ class ApiController extends BaseController
 
         try {
             $stripe = Utils::get_stripe();
-            
+
             // Define subscription plans
             $plans = [
                 'weekly' => [
@@ -1258,7 +1416,6 @@ class ApiController extends BaseController
                 'amount' => $selectedPlan['amount'] / 100,
                 'currency' => 'CAD'
             ], 'Subscription payment link created successfully.');
-
         } catch (\Exception $e) {
             return $this->error('Failed to create payment link: ' . $e->getMessage());
         }
@@ -1305,10 +1462,10 @@ class ApiController extends BaseController
 
         try {
             $stripe = Utils::get_stripe();
-            
+
             // Get payment link details
             $paymentLink = $stripe->paymentLinks->retrieve($user->pending_stripe_payment_id);
-            
+
             // Check if payment was completed by looking at recent payments
             $payments = $stripe->paymentIntents->all([
                 'limit' => 10,
@@ -1317,16 +1474,18 @@ class ApiController extends BaseController
 
             $paymentFound = false;
             foreach ($payments->data as $payment) {
-                if ($payment->status === 'succeeded' && 
-                    isset($payment->metadata['user_id']) && 
-                    $payment->metadata['user_id'] == $user->id) {
-                    
+                if (
+                    $payment->status === 'succeeded' &&
+                    isset($payment->metadata['user_id']) &&
+                    $payment->metadata['user_id'] == $user->id
+                ) {
+
                     // Activate subscription
                     $planId = $user->pending_subscription_plan;
                     $user->subscription_status = 'active';
                     $user->subscription_plan = $planId;
                     $user->subscription_started_at = now();
-                    
+
                     // Set expiration based on plan
                     switch ($planId) {
                         case 'weekly':
@@ -1339,14 +1498,14 @@ class ApiController extends BaseController
                             $user->subscription_expires_at = now()->addMonths(3);
                             break;
                     }
-                    
+
                     // Clear pending payment info
                     $user->pending_subscription_plan = null;
                     $user->pending_stripe_payment_id = null;
                     $user->pending_stripe_payment_url = null;
                     $user->stripe_payment_id = $payment->id;
                     $user->save();
-                    
+
                     $paymentFound = true;
                     break;
                 }
@@ -1367,7 +1526,6 @@ class ApiController extends BaseController
                     'payment_url' => $user->pending_stripe_payment_url
                 ], 'Payment still pending.');
             }
-
         } catch (\Exception $e) {
             return $this->error('Failed to check payment status: ' . $e->getMessage());
         }
@@ -1412,9 +1570,9 @@ class ApiController extends BaseController
             ], 'Test user premium access.');
         }
 
-        $isActive = $user->subscription_status === 'active' && 
-                   $user->subscription_expires_at && 
-                   $user->subscription_expires_at > now();
+        $isActive = $user->subscription_status === 'active' &&
+            $user->subscription_expires_at &&
+            $user->subscription_expires_at > now();
 
         $features = [];
         if ($isActive) {
@@ -1471,7 +1629,7 @@ class ApiController extends BaseController
         $user->subscription_status = 'active';
         $user->subscription_plan = $planId;
         $user->subscription_started_at = now();
-        
+
         switch ($planId) {
             case 'weekly':
                 $user->subscription_expires_at = now()->addWeek();
@@ -1483,7 +1641,7 @@ class ApiController extends BaseController
                 $user->subscription_expires_at = now()->addMonths(3);
                 break;
         }
-        
+
         $user->save();
 
         return $this->success([
@@ -1518,10 +1676,10 @@ class ApiController extends BaseController
         $user->save();
 
         $discoveryService = new \App\Services\DatingDiscoveryService();
-        
+
         try {
             $query = $discoveryService->discoverUsers($user, $r);
-            
+
             // Pagination
             $perPage = min($r->per_page ?? 20, 50); // Max 50 per page
             $users = $query->paginate($perPage);
@@ -1531,15 +1689,19 @@ class ApiController extends BaseController
             foreach ($users->items() as $discoveredUser) {
                 $discoveredUser->compatibility_score = $discoveryService->calculateCompatibilityScore($user, $discoveredUser);
                 $discoveredUser->distance = $user->getDistanceFrom($discoveredUser);
-                $discoveredUser->is_online = $discoveredUser->last_online_at && 
+                $discoveredUser->is_online = $discoveredUser->last_online_at &&
                     $discoveredUser->last_online_at >= now()->subMinutes(15);
-                $discoveredUser->last_seen = $discoveredUser->last_online_at ? 
+                $discoveredUser->last_seen = $discoveredUser->last_online_at ?
                     $discoveredUser->last_online_at->diffForHumans() : null;
-                
+
                 // Hide sensitive information
-                unset($discoveredUser->email, $discoveredUser->phone_number, 
-                      $discoveredUser->verification_code, $discoveredUser->password);
-                
+                unset(
+                    $discoveredUser->email,
+                    $discoveredUser->phone_number,
+                    $discoveredUser->verification_code,
+                    $discoveredUser->password
+                );
+
                 $transformedUsers[] = $discoveredUser;
             }
 
@@ -1554,7 +1716,6 @@ class ApiController extends BaseController
                 ],
                 'filters_applied' => $this->getAppliedFilters($r)
             ], 'Users discovered successfully.');
-
         } catch (\Exception $e) {
             return $this->error('Discovery failed: ' . $e->getMessage());
         }
@@ -1597,7 +1758,7 @@ class ApiController extends BaseController
         }
 
         $discoveryService = new \App\Services\DatingDiscoveryService();
-        
+
         // Create a smart request with optimized parameters
         $smartRequest = new Request([
             'mutual_interest_only' => true,
@@ -1615,15 +1776,19 @@ class ApiController extends BaseController
         // Add detailed compatibility information
         $recommendations->transform(function ($recommendedUser) use ($user, $discoveryService) {
             $compatibility = $discoveryService->calculateCompatibilityScore($user, $recommendedUser);
-            
+
             $recommendedUser->compatibility_score = $compatibility;
             $recommendedUser->distance = $user->getDistanceFrom($recommendedUser);
             $recommendedUser->compatibility_reasons = $this->getCompatibilityReasons($user, $recommendedUser);
-            
+
             // Hide sensitive information
-            unset($recommendedUser->email, $recommendedUser->phone_number, 
-                  $recommendedUser->verification_code, $recommendedUser->password);
-            
+            unset(
+                $recommendedUser->email,
+                $recommendedUser->phone_number,
+                $recommendedUser->verification_code,
+                $recommendedUser->password
+            );
+
             return $recommendedUser;
         });
 
@@ -1649,7 +1814,7 @@ class ApiController extends BaseController
         }
 
         $discoveryService = new \App\Services\DatingDiscoveryService();
-        
+
         // Get one user at a time for swiping
         $swipeRequest = new Request([
             'per_page' => 1,
@@ -1670,10 +1835,14 @@ class ApiController extends BaseController
         $swipeUser->compatibility_score = $discoveryService->calculateCompatibilityScore($user, $swipeUser);
         $swipeUser->distance = $user->getDistanceFrom($swipeUser);
         $swipeUser->shared_interests = $this->getSharedInterests($user, $swipeUser);
-        
+
         // Hide sensitive information
-        unset($swipeUser->email, $swipeUser->phone_number, 
-              $swipeUser->verification_code, $swipeUser->password);
+        unset(
+            $swipeUser->email,
+            $swipeUser->phone_number,
+            $swipeUser->verification_code,
+            $swipeUser->password
+        );
 
         // Check if there are more users available
         $hasMore = $query->skip(1)->exists();
@@ -1706,28 +1875,32 @@ class ApiController extends BaseController
 
         $query = User::where('id', '!=', $user->id)
             ->where('account_status', 'Active')
-            ->where(function($q) use ($searchTerm) {
+            ->where(function ($q) use ($searchTerm) {
                 $q->where('name', 'LIKE', "%{$searchTerm}%")
-                  ->orWhere('username', 'LIKE', "%{$searchTerm}%")
-                  ->orWhere('city', 'LIKE', "%{$searchTerm}%")
-                  ->orWhere('occupation', 'LIKE', "%{$searchTerm}%")
-                  ->orWhereJsonContains('interests', $searchTerm);
+                    ->orWhere('username', 'LIKE', "%{$searchTerm}%")
+                    ->orWhere('city', 'LIKE', "%{$searchTerm}%")
+                    ->orWhere('occupation', 'LIKE', "%{$searchTerm}%")
+                    ->orWhereJsonContains('interests', $searchTerm);
             });
 
         // Apply basic exclusions
         $this->excludeBlockedUsers($query, $user);
 
         $results = $query->take(20)->get();
-        
+
         $results->transform(function ($searchUser) use ($user) {
             $searchUser->distance = $user->getDistanceFrom($searchUser);
-            $searchUser->is_online = $searchUser->last_online_at && 
+            $searchUser->is_online = $searchUser->last_online_at &&
                 $searchUser->last_online_at >= now()->subMinutes(15);
-            
+
             // Hide sensitive information
-            unset($searchUser->email, $searchUser->phone_number, 
-                  $searchUser->verification_code, $searchUser->password);
-            
+            unset(
+                $searchUser->email,
+                $searchUser->phone_number,
+                $searchUser->verification_code,
+                $searchUser->password
+            );
+
             return $searchUser;
         });
 
@@ -1780,23 +1953,27 @@ class ApiController extends BaseController
                 cos(radians(longitude) - radians(?)) + 
                 sin(radians(?)) * sin(radians(latitude))
             )) as distance", [
-                $user->latitude, 
-                $user->longitude, 
-                $user->latitude
-            ])
+            $user->latitude,
+            $user->longitude,
+            $user->latitude
+        ])
             ->orderBy('distance', 'asc')
             ->take(30)
             ->get();
 
         $nearbyUsers->transform(function ($nearbyUser) use ($user) {
             $nearbyUser->distance = round($nearbyUser->distance, 1);
-            $nearbyUser->is_online = $nearbyUser->last_online_at && 
+            $nearbyUser->is_online = $nearbyUser->last_online_at &&
                 $nearbyUser->last_online_at >= now()->subMinutes(15);
-            
+
             // Hide sensitive information
-            unset($nearbyUser->email, $nearbyUser->phone_number, 
-                  $nearbyUser->verification_code, $nearbyUser->password);
-            
+            unset(
+                $nearbyUser->email,
+                $nearbyUser->phone_number,
+                $nearbyUser->verification_code,
+                $nearbyUser->password
+            );
+
             return $nearbyUser;
         });
 
@@ -1812,7 +1989,7 @@ class ApiController extends BaseController
     private function getAppliedFilters(Request $r)
     {
         $appliedFilters = [];
-        
+
         $filterMap = [
             'max_distance' => 'Distance',
             'city' => 'City',
@@ -1872,7 +2049,7 @@ class ApiController extends BaseController
         if ($user1->education_level && $user2->education_level && $user1->education_level === $user2->education_level) {
             $lifestyleMatches[] = 'education';
         }
-        
+
         if (!empty($lifestyleMatches)) {
             $reasons[] = "Similar " . implode(' and ', $lifestyleMatches);
         }
@@ -1887,11 +2064,11 @@ class ApiController extends BaseController
 
     private function getSharedInterests(User $user1, User $user2)
     {
-        $user1Interests = is_string($user1->interests) 
-            ? json_decode($user1->interests, true) 
+        $user1Interests = is_string($user1->interests)
+            ? json_decode($user1->interests, true)
             : ($user1->interests ?? []);
-        $user2Interests = is_string($user2->interests) 
-            ? json_decode($user2->interests, true) 
+        $user2Interests = is_string($user2->interests)
+            ? json_decode($user2->interests, true)
             : ($user2->interests ?? []);
 
         if (empty($user1Interests) || empty($user2Interests)) {
@@ -1904,15 +2081,15 @@ class ApiController extends BaseController
     private function excludeBlockedUsers($query, User $user)
     {
         $blockedUserIds = \App\Models\UserBlock::where('blocker_id', $user->id)
-            ->pluck('blocked_id')
+            ->pluck('blocked_user_id')
             ->toArray();
-            
-        $blockedByUserIds = \App\Models\UserBlock::where('blocked_id', $user->id)
+
+        $blockedByUserIds = \App\Models\UserBlock::where('blocked_user_id', $user->id)
             ->pluck('blocker_id')
             ->toArray();
-            
+
         $allBlockedIds = array_merge($blockedUserIds, $blockedByUserIds);
-        
+
         if (!empty($allBlockedIds)) {
             $query->whereNotIn('id', $allBlockedIds);
         }
@@ -1959,12 +2136,11 @@ class ApiController extends BaseController
             $photoLikeService = new \App\Services\PhotoLikeService();
             $result = $photoLikeService->processSwipeAction($user, $targetUserId, $action, $message);
 
-            $message = $result['is_match'] 
+            $message = $result['is_match']
                 ? "It's a match! 💕 You and the other person liked each other!"
                 : ucfirst($action) . " sent successfully.";
 
             return $this->success($result, $message);
-
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }
@@ -1995,7 +2171,6 @@ class ApiController extends BaseController
                 'count' => $likedByUsers->count(),
                 'has_premium_required' => !$user->hasActiveSubscription() && $likedByUsers->count() > 3
             ], 'Users who liked you retrieved successfully.');
-
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }
@@ -2021,11 +2196,11 @@ class ApiController extends BaseController
             $limit = min($r->limit ?? 50, 100);
             $page = max($r->page ?? 1, 1);
             $filter = $r->filter ?? 'all';
-            
+
             // Simple matching logic - find potential matches based on opposite gender
             $userGender = strtolower($user->sex ?? 'male');
             $oppositeGender = ($userGender === 'male') ? 'female' : 'male';
-            
+
             // Always return dummy matches for demo purposes to ensure user sees matches
             $dummyMatches = $this->createDummyMatches($user, $limit);
             $formattedMatches = $dummyMatches;
@@ -2047,7 +2222,6 @@ class ApiController extends BaseController
                 'current_filter' => $filter,
                 'total_matches' => $formattedMatches->count()
             ], 'Matches retrieved successfully.');
-
         } catch (\Exception $e) {
             return Utils::error('Failed to get matches: ' . $e->getMessage());
         }
@@ -2061,21 +2235,21 @@ class ApiController extends BaseController
         $userGender = strtolower($currentUser->sex ?? 'male');
         $oppositeGender = ($userGender === 'male') ? 'female' : 'male';
         $oppositeGenderName = ($userGender === 'male') ? 'Female' : 'Male';
-        
+
         $dummyUsers = collect();
-        
+
         $femaleNames = ['Emma', 'Sarah', 'Jessica', 'Ashley', 'Jennifer', 'Amanda', 'Stephanie', 'Melissa', 'Nicole', 'Elizabeth'];
         $maleNames = ['Michael', 'David', 'James', 'Robert', 'John', 'Daniel', 'Christopher', 'Matthew', 'Anthony', 'Mark'];
-        
+
         $names = ($oppositeGender === 'female') ? $femaleNames : $maleNames;
         $ages = [22, 24, 26, 28, 25, 29, 23, 27, 30, 26];
         $cities = ['Toronto', 'Vancouver', 'Montreal', 'Calgary', 'Ottawa', 'Edmonton', 'Mississauga', 'Winnipeg', 'Quebec City', 'Hamilton'];
-        
+
         for ($i = 0; $i < min($limit, 10); $i++) {
             $age = $ages[$i % count($ages)];
             $name = $names[$i % count($names)];
             $city = $cities[$i % count($cities)];
-            
+
             $dummyUser = (object) [
                 'id' => 1000 + $i,
                 'first_name' => $name,
@@ -2099,10 +2273,10 @@ class ApiController extends BaseController
                 'is_online' => $i % 3 == 0,
                 'last_active' => $i % 2 == 0 ? 'Active now' : (rand(1, 24) . ' hours ago')
             ];
-            
+
             $dummyUsers->push($this->formatMatchUser($dummyUser, $currentUser, true));
         }
-        
+
         return $dummyUsers;
     }
 
@@ -2116,7 +2290,7 @@ class ApiController extends BaseController
         $hasMessage = rand(0, 1);
         $isSuperLike = rand(0, 10) < 2; // 20% chance
         $matchedHoursAgo = rand(1, 72);
-        
+
         $lastMessage = null;
         if ($hasMessage) {
             $messages = [
@@ -2133,20 +2307,20 @@ class ApiController extends BaseController
                 'is_read' => rand(0, 1) == 1
             ];
         }
-        
+
         return [
             'id' => $matchUser->id ?? ($matchUser['id'] ?? rand(1000, 2000)),
             'match_id' => 'match_' . ($matchUser->id ?? rand(1000, 2000)) . '_' . $currentUser->id,
             'user' => [
                 'id' => $matchUser->id ?? ($matchUser['id'] ?? rand(1000, 2000)),
-                'name' => is_object($matchUser) ? ($matchUser->name ?? $matchUser->first_name . ' ' . ($matchUser->last_name ?? '')) 
-                                               : ($matchUser['name'] ?? $matchUser['first_name'] . ' ' . ($matchUser['last_name'] ?? '')),
+                'name' => is_object($matchUser) ? ($matchUser->name ?? $matchUser->first_name . ' ' . ($matchUser->last_name ?? ''))
+                    : ($matchUser['name'] ?? $matchUser['first_name'] . ' ' . ($matchUser['last_name'] ?? '')),
                 'first_name' => is_object($matchUser) ? $matchUser->first_name : $matchUser['first_name'],
                 'age' => is_object($matchUser) ? ($matchUser->age ?? 25) : ($matchUser['age'] ?? 25),
-                'avatar' => is_object($matchUser) ? ($matchUser->avatar ?? "https://ui-avatars.com/api/?name=" . urlencode($matchUser->name ?? 'User') . "&background=667eea&color=fff&size=400") 
-                                                 : ($matchUser['avatar'] ?? "https://ui-avatars.com/api/?name=" . urlencode($matchUser['name'] ?? 'User') . "&background=667eea&color=fff&size=400"),
-                'avatar_thumbnail' => is_object($matchUser) ? ($matchUser->avatar_thumbnail ?? "https://ui-avatars.com/api/?name=" . urlencode($matchUser->name ?? 'User') . "&background=667eea&color=fff&size=200") 
-                                                           : ($matchUser['avatar_thumbnail'] ?? "https://ui-avatars.com/api/?name=" . urlencode($matchUser['name'] ?? 'User') . "&background=667eea&color=fff&size=200"),
+                'avatar' => is_object($matchUser) ? ($matchUser->avatar ?? "https://ui-avatars.com/api/?name=" . urlencode($matchUser->name ?? 'User') . "&background=667eea&color=fff&size=400")
+                    : ($matchUser['avatar'] ?? "https://ui-avatars.com/api/?name=" . urlencode($matchUser['name'] ?? 'User') . "&background=667eea&color=fff&size=400"),
+                'avatar_thumbnail' => is_object($matchUser) ? ($matchUser->avatar_thumbnail ?? "https://ui-avatars.com/api/?name=" . urlencode($matchUser->name ?? 'User') . "&background=667eea&color=fff&size=200")
+                    : ($matchUser['avatar_thumbnail'] ?? "https://ui-avatars.com/api/?name=" . urlencode($matchUser['name'] ?? 'User') . "&background=667eea&color=fff&size=200"),
                 'bio' => is_object($matchUser) ? ($matchUser->bio ?? 'Hello! Nice to meet you.') : ($matchUser['bio'] ?? 'Hello! Nice to meet you.'),
                 'location' => is_object($matchUser) ? ($matchUser->location ?? 'Toronto, Canada') : ($matchUser['location'] ?? 'Toronto, Canada'),
                 'distance' => is_object($matchUser) ? ($matchUser->distance ?? rand(2, 25) . ' km away') : ($matchUser['distance'] ?? rand(2, 25) . ' km away'),
@@ -2190,7 +2364,6 @@ class ApiController extends BaseController
             $result = $photoLikeService->undoLastSwipe($user);
 
             return $this->success($result, 'Last swipe undone successfully.');
-
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }
@@ -2216,7 +2389,6 @@ class ApiController extends BaseController
             $stats = $photoLikeService->getSwipeStats($user);
 
             return $this->success($stats, 'Swipe statistics retrieved successfully.');
-
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }
@@ -2242,7 +2414,6 @@ class ApiController extends BaseController
             $profileStats = $photoLikeService->getProfileStats($user);
 
             return $this->success($profileStats, 'Profile statistics retrieved successfully.');
-
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }
@@ -2267,25 +2438,25 @@ class ApiController extends BaseController
 
         // Recent likes received
         $recentLikes = \App\Models\UserLike::where('liked_user_id', $user->id)
-                                          ->where('status', 'Active')
-                                          ->whereIn('type', ['like', 'super_like'])
-                                          ->where('created_at', '>=', now()->subDays($days))
-                                          ->with('liker')
-                                          ->orderBy('created_at', 'desc')
-                                          ->limit(10)
-                                          ->get();
+            ->where('status', 'Active')
+            ->whereIn('type', ['like', 'super_like'])
+            ->where('created_at', '>=', now()->subDays($days))
+            ->with('liker')
+            ->orderBy('created_at', 'desc')
+            ->limit(10)
+            ->get();
 
         // Recent matches
-        $recentMatches = \App\Models\UserMatch::where(function($query) use ($user) {
-                                                  $query->where('user_id', $user->id)
-                                                        ->orWhere('matched_user_id', $user->id);
-                                              })
-                                              ->where('status', 'Active')
-                                              ->where('created_at', '>=', now()->subDays($days))
-                                              ->with(['user', 'matchedUser'])
-                                              ->orderBy('created_at', 'desc')
-                                              ->limit(10)
-                                              ->get();
+        $recentMatches = \App\Models\UserMatch::where(function ($query) use ($user) {
+            $query->where('user_id', $user->id)
+                ->orWhere('matched_user_id', $user->id);
+        })
+            ->where('status', 'Active')
+            ->where('created_at', '>=', now()->subDays($days))
+            ->with(['user', 'matchedUser'])
+            ->orderBy('created_at', 'desc')
+            ->limit(10)
+            ->get();
 
         $formattedLikes = $recentLikes->map(function ($like) {
             return [
@@ -2344,9 +2515,9 @@ class ApiController extends BaseController
         try {
             // Check if user already has an active boost
             $activeBoost = \App\Models\ProfileBoost::where('user_id', $user->id)
-                                                  ->where('status', 'active')
-                                                  ->where('expires_at', '>', now())
-                                                  ->first();
+                ->where('status', 'active')
+                ->where('expires_at', '>', now())
+                ->first();
 
             if ($activeBoost) {
                 return $this->error('You already have an active boost. Current boost expires at ' . $activeBoost->expires_at->format('Y-m-d H:i:s'));
@@ -2385,7 +2556,6 @@ class ApiController extends BaseController
                 'duration_minutes' => 30,
                 'message' => 'Your profile is now boosted! You\'ll get 3x more visibility for the next 30 minutes.'
             ], 'Profile boost activated successfully!');
-
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }
@@ -2409,15 +2579,15 @@ class ApiController extends BaseController
         try {
             // Current active boost
             $activeBoost = \App\Models\ProfileBoost::where('user_id', $user->id)
-                                                  ->where('status', 'active')
-                                                  ->where('expires_at', '>', now())
-                                                  ->first();
+                ->where('status', 'active')
+                ->where('expires_at', '>', now())
+                ->first();
 
             // Recent boost history (last 10)
             $boostHistory = \App\Models\ProfileBoost::where('user_id', $user->id)
-                                                   ->orderBy('created_at', 'desc')
-                                                   ->limit(10)
-                                                   ->get();
+                ->orderBy('created_at', 'desc')
+                ->limit(10)
+                ->get();
 
             // Check available boosts
             $subscriptionManager = new \App\Services\SubscriptionManager();
@@ -2435,7 +2605,7 @@ class ApiController extends BaseController
                     'percentage_complete' => min(100, (now()->diffInMinutes($activeBoost->started_at) / 30) * 100)
                 ] : null,
                 'available_boosts' => $availableBoosts,
-                'boost_history' => $boostHistory->map(function($boost) {
+                'boost_history' => $boostHistory->map(function ($boost) {
                     return [
                         'id' => $boost->id,
                         'boost_type' => $boost->boost_type,
@@ -2457,7 +2627,6 @@ class ApiController extends BaseController
             ];
 
             return $this->success($response, 'Boost status retrieved successfully.');
-
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }
@@ -2481,9 +2650,9 @@ class ApiController extends BaseController
         try {
             // Check if user already has an active boost
             $activeBoost = \App\Models\ProfileBoost::where('user_id', $user->id)
-                                                  ->where('status', 'active')
-                                                  ->where('expires_at', '>', now())
-                                                  ->first();
+                ->where('status', 'active')
+                ->where('expires_at', '>', now())
+                ->first();
 
             if ($activeBoost) {
                 return $this->success([
@@ -2501,7 +2670,6 @@ class ApiController extends BaseController
                 'can_use_boost' => $canUseBoost,
                 'reason' => $canUseBoost ? 'available' : 'subscription_required',
             ], $canUseBoost ? 'Boost available' : 'Premium subscription required');
-
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }
@@ -2541,7 +2709,6 @@ class ApiController extends BaseController
                 'relationship_goals' => $filters['relationship_goals'] ?? [],
                 'interests' => $filters['interests'] ?? [],
             ], 'Search filters retrieved successfully.');
-
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }
@@ -2590,7 +2757,6 @@ class ApiController extends BaseController
                 'filters_saved' => true,
                 'active_filters_count' => $this->countActiveFilters($filters),
             ], 'Advanced search filters saved successfully!');
-
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }
@@ -2621,7 +2787,6 @@ class ApiController extends BaseController
             return $this->success([
                 'tracked' => true,
             ], 'Feature usage tracked successfully.');
-
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }
@@ -2645,8 +2810,8 @@ class ApiController extends BaseController
 
             // Check how many people liked the user
             $likesReceived = \App\Models\UserLike::where('liked_user_id', $user->id)
-                                                 ->where('action', 'like')
-                                                 ->count();
+                ->where('action', 'like')
+                ->count();
 
             if ($likesReceived > 5) {
                 $reasons[] = "You have $likesReceived people who liked you waiting - see who they are!";
@@ -2662,9 +2827,9 @@ class ApiController extends BaseController
 
             // Check match rate
             $matches = \App\Models\UserMatch::where('user_id', $user->id)
-                                          ->orWhere('matched_user_id', $user->id)
-                                          ->where('status', 'matched')
-                                          ->count();
+                ->orWhere('matched_user_id', $user->id)
+                ->where('status', 'matched')
+                ->count();
 
             if ($matches < 3) {
                 $reasons[] = "Premium users get 3x more matches on average";
@@ -2688,7 +2853,6 @@ class ApiController extends BaseController
                     'swipes_remaining' => $stats['likes_remaining'],
                 ],
             ], 'Upgrade recommendations generated.');
-
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }
@@ -2700,7 +2864,7 @@ class ApiController extends BaseController
     private function countActiveFilters($filters)
     {
         $count = 0;
-        
+
         if ($filters['min_age'] != 18 || $filters['max_age'] != 35) $count++;
         if ($filters['distance'] != 50) $count++;
         if ($filters['min_height'] != 150 || $filters['max_height'] != 200) $count++;
@@ -2709,7 +2873,7 @@ class ApiController extends BaseController
         if (!empty($filters['lifestyle'])) $count++;
         if (!empty($filters['relationship_goals'])) $count++;
         if (!empty($filters['interests'])) $count++;
-        
+
         return $count;
     }
 
@@ -2746,293 +2910,16 @@ class ApiController extends BaseController
         $max_time = Carbon::now();
 
 
-        //movies with last_listing_date is between 12 hours ago and now
-        $oldest_listed_movies = MovieModel::where([
-            'status' => 'Active',
-            'type' => 'Movie',
-        ])
-            ->where('url', 'not like', '%movies.ug%')
-            ->whereBetween('last_listing_date', [$min_time, $max_time])
-
-            ->orderBy('last_listing_date', 'desc')
-            ->limit(200)
-            ->get($take_only);
-
-
-        //if less than 200, get the rest of the movies
-        if (count($oldest_listed_movies) < 200) {
-            $oldest_listed_movies = MovieModel::where([
-                'status' => 'Active',
-                'type' => 'Movie',
-            ])
-                ->where('url', 'not like', '%movies.ug%')
-                ->orderBy('last_listing_date', 'desc')
-                ->limit(200)
-                ->get($take_only);
-            //shuffle $oldest_listed_movies
-            $oldest_listed_movies = $oldest_listed_movies->shuffle();
-            //set last_listing_date to now
-            foreach ($oldest_listed_movies as $key => $movie) {
-                $movie->last_listing_date = Carbon::now();
-                $movie->save();
-            }
-        }
 
 
 
-        //shuffle $oldest_listed_movies
-        $oldest_listed_movies = $oldest_listed_movies->shuffle();
-        //shuffle $oldest_listed_movies
-        $oldest_listed_movies = $oldest_listed_movies->shuffle();
 
         $now = Carbon::now();
         $today = $now->format('d');
         $topMovie = null;
 
-        if (isset($oldest_listed_movies[$today])) {
-            $topMovie = $oldest_listed_movies[$today];
-        } else {
-            $topMovie = $oldest_listed_movies[0];
-        }
-
-        try {
-            $trending =  TrendingNotification::getTendingMovie();
-            if ($trending != null) {
-                $topMovie = $trending;
-            }
-        } catch (\Throwable $th) {
-        }
-
-
-
-
         $lists = [];
-        $movies = $oldest_listed_movies;
-        $my_view_ids = MovieView::where('user_id', $u->id)
-            ->pluck('movie_model_id');
-        //top movies
-        if (count($movies) > 10) {
 
-            //top movies 
-            //movies with most views_time_count but not in my_view_ids
-            $top_movies = MovieModel::whereNotIn('id', $my_view_ids)
-                ->where('status', 'Active')
-                ->where('type', 'Movie')
-                ->orderBy('views_time_count', 'desc')
-                ->limit(20)
-                ->get($take_only);
-
-            //shuffle $top_movies
-            // $top_movies = $top_movies->shuffle(); 
-
-            $my_list['title'] = "Featured Movies";
-            $my_list['movies'] = $top_movies;
-            $lists[] = $my_list;
-        }
-
-        //watched_movies continue watching
-
-        $watched_movies = MovieView::where('user_id', $u->id)
-            ->orderBy('updated_at', 'desc')
-            ->limit(50)
-            ->get();
-        if ($watched_movies->count() > 0) {
-            $my_list['title'] = "Continue Watching";
-
-
-            $my_list['movies'] = $watched_movies->take(50)->map(function ($view) {
-                return MovieModel::find($view->movie_model_id);
-            })->filter(function ($movie) {
-                return $movie != null;
-            });
-
-
-            $lists[] = $my_list;
-        } else {
-            $my_list['title'] = "Continue Watching";
-            $my_list['movies'] = [];
-            $lists[] = $my_list;
-        }
-
-
-        //trending movies
-        if (count($movies) > 20) {
-
-            $note_include_ids = [];
-            //get trending movies that are not in my_view_ids
-            foreach ($my_view_ids as $id) {
-                $note_include_ids[] = $id;
-            }
-
-            //add already added movies add to note_include_ids
-            foreach ($lists as $key => $list) {
-                if (!isset($list['movies']) || count($list['movies']) < 1) {
-                    continue;
-                }
-                foreach ($list['movies'] as $key2 => $movie) {
-                    $note_include_ids[] = $movie->id;
-                }
-            }
-
-
-            //trending movies
-            $trending_movies = MovieModel::whereNotIn('id', $note_include_ids)
-                ->where('status', 'Active')
-                ->where('type', 'Movie')
-                ->orderBy('downloads_count', 'desc')
-                ->limit(30)
-                ->get($take_only);
-
-            //shuffle $trending_movies
-            $trending_movies = $trending_movies->shuffle();
-
-
-            //if trending movies is empty, return empty list
-            if ($trending_movies->count() < 1) {
-                //get top 10 of that platform
-                $trending_movies = MovieModel::where('status', 'Active')
-                    ->where('type', 'Movie')
-                    ->orderBy('downloads_count', 'desc')
-                    ->limit(10)
-                    ->get($take_only);
-            }
-
-            $my_list['title'] = "Trending Movies";
-            $my_list['movies'] = $trending_movies;
-            $lists[] = $my_list;
-        }
-
-
-        //for you movies
-
-        if (count($movies) > 10) {
-            $my_list['title'] = "For You";
-            $my_list['movies'] = $movies->skip(10)->take(10);
-            $lists[] = $my_list;
-        }
-
-
-        //continue watching
-        if (count($movies) > 30) {
-            $my_list['title'] = "Continue Watching";
-            $my_list['movies'] = $movies->skip(20)->take(10);
-            $lists[] = $my_list;
-        }
-        //latest movies
-        if (count($movies) > 40) {
-            $my_list['title'] = "Latest Movies";
-            $my_list['movies'] = $movies->skip(30)->take(10);
-            $lists[] = $my_list;
-        }
-
-
-        //drama movies
-        if (count($movies) > 60) {
-            $my_list['title'] = "Drama Movies";
-            $my_list['movies'] = $movies->skip(40)->take(10);
-            $lists[] = $my_list;
-        }
-        //action movies
-        if (count($movies) > 70) {
-            $my_list['title'] = "Action Movies";
-            $my_list['movies'] = $movies->skip(70)->take(10);
-            $lists[] = $my_list;
-        }
-
-        //comedy movies
-        if (count($movies) > 80) {
-            $my_list['title'] = "Comedy Movies";
-            $my_list['movies'] = $movies->skip(80)->take(10);
-            $lists[] = $my_list;
-        }
-        /* //horror movies
-        if (count($movies) > 90) { 
-            $my_list['title'] = "Horror Movies";
-            $my_list['movies'] = $movies->skip(90)->take(10);
-            $lists[] = $my_list;
-        }
-        //romantic movies
-        if (count($movies) > 100) {
-            $my_list['title'] = "Romantic Movies";
-            $my_list['movies'] = $movies->skip(100)->take(10);
-            $lists[] = $my_list;
-        }
-        //action movies
-        if (count($movies) > 110) {
-            $my_list['title'] = "Action Movies";
-            $my_list['movies'] = $movies->skip(110)->take(10);
-            $lists[] = $my_list;
-        }
-
-        //documentary movies
-        if (count($movies) > 120) {
-            $my_list['title'] = "Documentary Movies";
-            $my_list['movies'] = $movies->skip(120)->take(10);
-            $lists[] = $my_list;
-        }
-
-        //kids movies
-        if (count($movies) > 130) {
-            $my_list['title'] = "Kids Movies";
-            $my_list['movies'] = $movies->skip(130)->take(10);
-            $lists[] = $my_list;
-        }
-
-        //oldest movies
-        if (count($movies) > 140) {
-            $my_list['title'] = "Oldest Movies";
-            $my_list['movies'] = $movies->skip(140)->take(10);
-            $lists[] = $my_list;
-        }
-
-        //latest movies
-        if (count($movies) > 150) {
-            $my_list['title'] = "Latest Movies";
-            $my_list['movies'] = $movies->skip(150)->take(10);
-            $lists[] = $my_list;
-        }
-
-        //latest movies
-        if (count($movies) > 160) {
-            $my_list['title'] = "Latest Movies";
-            $my_list['movies'] = $movies->skip(160)->take(10);
-            $lists[] = $my_list;
-        }
-
-        //latest movies
-        if (count($movies) > 170) {
-            $my_list['title'] = "Latest Movies";
-            $my_list['movies'] = $movies->skip(170)->take(10);
-            $lists[] = $my_list;
-        }
-
-        //Recommended movies
-        if (count($movies) > 180) {
-            $my_list['title'] = "Recommended Movies";
-            $my_list['movies'] = $movies->skip(180)->take(10);
-            $lists[] = $my_list;
-        }
-
-        //indian movies
-        if (count($movies) > 190) {
-            $my_list['title'] = "Indian Movies";
-            $my_list['movies'] = $movies->skip(190)->take(10);
-            $lists[] = $my_list;
-        }
-
-        //korean movies
-        if (count($movies) > 200) {
-            $my_list['title'] = "Korean Movies";
-            $my_list['movies'] = $movies->skip(200)->take(10);
-            $lists[] = $my_list;
-        } */
-
-        //latest movies
-        if (count($movies) > 210) {
-            $my_list['title'] = "Latest Movies";
-            $my_list['movies'] = $movies->skip(210)->take(10);
-            $lists[] = $my_list;
-        }
 
 
         $unique_genres = [];
@@ -3085,26 +2972,8 @@ class ApiController extends BaseController
             }
         }
 
-        $iosMovies = MovieModel::where(['platform_type' => 'ios'])->get();
-
         $platform_type  = Utils::get_platform();
-        if ($platform_type == 'ios') {
-            $lists = [];
-            $item['title'] = 'Continue Watching';
-            $item['movies'] = $iosMovies;
-            $lists[] = $item;
 
-
-            $item['title'] = 'Featured Movies';
-            $iosMovies = $iosMovies->shuffle();
-            $item['movies'] = $iosMovies;
-            $lists[] = $item;
-            
-            $iosMovies = $iosMovies->shuffle();
-            if (isset($iosMovies[0])) {
-                $topMovie = $iosMovies[0];
-            }
-        }
         $manifest = [
             'top_movie' => [$topMovie],
             'vj' => $unique_vj,
@@ -3177,41 +3046,7 @@ class ApiController extends BaseController
 
 
 
-    public function save_view_progress(Request $r)
-    {
-        $u = Utils::get_user($r);
-        if ($u == null) {
-            Utils::error("Unauthonticated.");
-        }
-        $movie = MovieModel::find($r->get('movie_id'));
-        if ($movie == null) {
-            Utils::error("Movie not found.");
-        }
-
-        if ($u != null) {
-            $u = User::find($u->id);
-            if ($u != null) {
-                $u->last_online_at = now();
-                $u->save();
-            }
-        }
-
-
-        $view = MovieView::where([
-            'movie_model_id' => $movie->id,
-            'user_id' => $u->id,
-        ])->first();
-        if ($view == null) {
-            $view = new MovieView();
-            $view->movie_model_id = $movie->id;
-            $view->user_id = $u->id;
-        }
-        $view->progress = $r->get('progress');
-        $view->max_progress = $r->get('max_progress');
-        $view->status = $r->get('status');
-        $view->save();
-        Utils::success($view, "Progress saved successfully.");
-    }
+    public function save_view_progress(Request $r) {}
     public function my_update(Request $r, $model)
     {
         $u = Utils::get_user($r);
@@ -3923,7 +3758,7 @@ class ApiController extends BaseController
             // Check for inappropriate keywords (simple mock implementation)
             $inappropriateKeywords = ['abuse', 'threat', 'violence', 'hate'];
             $lowerMessage = strtolower($message);
-            
+
             foreach ($inappropriateKeywords as $keyword) {
                 if (strpos($lowerMessage, $keyword) !== false) {
                     $safetyAnalysis['safety_level'] = 'dangerous';
@@ -3959,7 +3794,7 @@ class ApiController extends BaseController
         try {
             // Mock report submission
             $reportId = 'RPT' . time() . rand(100, 999);
-            
+
             $reportData = [
                 'report_id' => $reportId,
                 'reported_user_id' => $reportedUserId,
@@ -4146,7 +3981,7 @@ class ApiController extends BaseController
         try {
             // Mock emergency safety alert processing
             $alertId = 'ALERT' . time() . rand(100, 999);
-            
+
             $alertResponse = [
                 'alert_id' => $alertId,
                 'status' => 'processed',
@@ -4269,20 +4104,20 @@ class ApiController extends BaseController
 
             // Filter by cuisine if specified
             if ($cuisine !== 'all') {
-                $restaurants = array_filter($restaurants, function($restaurant) use ($cuisine) {
+                $restaurants = array_filter($restaurants, function ($restaurant) use ($cuisine) {
                     return strtolower($restaurant['cuisine']) === strtolower($cuisine);
                 });
             }
 
             // Filter by price range if specified
             if ($priceRange !== 'all') {
-                $restaurants = array_filter($restaurants, function($restaurant) use ($priceRange) {
+                $restaurants = array_filter($restaurants, function ($restaurant) use ($priceRange) {
                     return $restaurant['price_range'] === $priceRange;
                 });
             }
 
             // Filter by distance
-            $restaurants = array_filter($restaurants, function($restaurant) use ($maxDistance) {
+            $restaurants = array_filter($restaurants, function ($restaurant) use ($maxDistance) {
                 return $restaurant['distance_km'] <= $maxDistance;
             });
 
@@ -4397,13 +4232,13 @@ class ApiController extends BaseController
 
             if (isset($budgetRanges[$budget])) {
                 $range = $budgetRanges[$budget];
-                $activities = array_filter($activities, function($activity) use ($range) {
+                $activities = array_filter($activities, function ($activity) use ($range) {
                     return $activity['cost_per_person'] >= $range[0] && $activity['cost_per_person'] <= $range[1];
                 });
             }
 
             // Filter by time preference
-            $activities = array_filter($activities, function($activity) use ($timePreference) {
+            $activities = array_filter($activities, function ($activity) use ($timePreference) {
                 return in_array($timePreference, $activity['time_of_day']);
             });
 
@@ -4514,18 +4349,18 @@ class ApiController extends BaseController
 
             // Filter by date type
             if ($dateType !== 'any') {
-                $popularSpots = array_filter($popularSpots, function($spot) use ($dateType) {
+                $popularSpots = array_filter($popularSpots, function ($spot) use ($dateType) {
                     return $spot['type'] === $dateType;
                 });
             }
 
             // Filter by radius
-            $popularSpots = array_filter($popularSpots, function($spot) use ($radius) {
+            $popularSpots = array_filter($popularSpots, function ($spot) use ($radius) {
                 return $spot['distance_km'] <= $radius;
             });
 
             // Sort by popularity score
-            usort($popularSpots, function($a, $b) {
+            usort($popularSpots, function ($a, $b) {
                 return $b['popularity_score'] <=> $a['popularity_score'];
             });
 
@@ -4648,7 +4483,6 @@ class ApiController extends BaseController
             ];
 
             return $this->success($booking, 'Restaurant booked successfully! Confirmation details sent to your partner.');
-
         } catch (\Exception $e) {
             return $this->error('Failed to book restaurant: ' . $e->getMessage());
         }
@@ -4710,7 +4544,6 @@ class ApiController extends BaseController
             ];
 
             return $this->success($booking, 'Activity booked successfully! Your date adventure awaits.');
-
         } catch (\Exception $e) {
             return $this->error('Failed to book activity: ' . $e->getMessage());
         }
@@ -4820,7 +4653,7 @@ class ApiController extends BaseController
             ];
 
             // Filter packages based on preferences
-            $filteredPackages = array_filter($packages, function($package) use ($dateStyle) {
+            $filteredPackages = array_filter($packages, function ($package) use ($dateStyle) {
                 return in_array($dateStyle, $package['ideal_for']);
             });
 
@@ -4838,7 +4671,6 @@ class ApiController extends BaseController
                 ],
                 'savings_info' => 'Save 10-20% compared to booking separately!'
             ], 'Date packages retrieved successfully.');
-
         } catch (\Exception $e) {
             return $this->error('Failed to get date packages: ' . $e->getMessage());
         }
@@ -4913,7 +4745,6 @@ class ApiController extends BaseController
             ];
 
             return $this->success($booking, 'Complete date package booked! Both venues have been notified.');
-
         } catch (\Exception $e) {
             return $this->error('Failed to book date package: ' . $e->getMessage());
         }
@@ -4993,7 +4824,7 @@ class ApiController extends BaseController
 
             // Filter by status if specified
             if ($status !== 'all') {
-                $bookings = array_filter($bookings, function($booking) use ($status) {
+                $bookings = array_filter($bookings, function ($booking) use ($status) {
                     return $booking['status'] === $status;
                 });
             }
@@ -5018,7 +4849,6 @@ class ApiController extends BaseController
                     'has_more' => false
                 ]
             ], 'Booking history retrieved successfully.');
-
         } catch (\Exception $e) {
             return $this->error('Failed to get booking history: ' . $e->getMessage());
         }
@@ -5063,7 +4893,6 @@ class ApiController extends BaseController
             ];
 
             return $this->success($cancellation, 'Booking cancelled successfully. Refund is being processed.');
-
         } catch (\Exception $e) {
             return $this->error('Failed to cancel booking: ' . $e->getMessage());
         }
@@ -5159,7 +4988,6 @@ class ApiController extends BaseController
                     'price_modifiers_explained' => 'Peak times (7-8 PM) have higher demand pricing'
                 ]
             ], 'Available time slots retrieved successfully.');
-
         } catch (\Exception $e) {
             return $this->error('Failed to get available time slots: ' . $e->getMessage());
         }
@@ -5461,7 +5289,7 @@ class ApiController extends BaseController
             $selectedMilestone = $milestoneGifts[$milestoneType] ?? $milestoneGifts['general'];
 
             // Filter items by budget
-            $budgetFilteredItems = array_filter($selectedMilestone['recommended_items'], function($item) use ($selectedBudgetRange) {
+            $budgetFilteredItems = array_filter($selectedMilestone['recommended_items'], function ($item) use ($selectedBudgetRange) {
                 return $item['price'] >= $selectedBudgetRange['min'] && $item['price'] <= $selectedBudgetRange['max'];
             });
 
@@ -5490,7 +5318,7 @@ class ApiController extends BaseController
             // Add seasonal recommendations if applicable
             $currentMonth = Carbon::now()->month;
             $seasonalSuggestions = [];
-            
+
             if ($currentMonth == 2 && $milestoneType == 'general') {
                 $seasonalSuggestions[] = "Valentine's Day is coming up! Consider romantic flowers or jewelry.";
             } elseif (in_array($currentMonth, [11, 12]) && $milestoneType == 'general') {
@@ -5512,7 +5340,6 @@ class ApiController extends BaseController
                 'currency' => 'CAD',
                 'total_suggestions' => count($budgetFilteredItems)
             ], 'Milestone gift suggestions retrieved successfully.');
-
         } catch (\Exception $e) {
             return $this->error('Failed to get milestone gift suggestions: ' . $e->getMessage());
         }
@@ -5556,7 +5383,6 @@ class ApiController extends BaseController
                     'suggested_gifts_included' => true
                 ]
             ], 'Milestone reminder saved successfully.');
-
         } catch (\Exception $e) {
             return $this->error('Failed to save milestone reminder: ' . $e->getMessage());
         }
@@ -5575,7 +5401,7 @@ class ApiController extends BaseController
 
             // Get order data from request
             $orderData = $request->all();
-            
+
             // Basic validation
             if (!isset($orderData['items']) || empty($orderData['items'])) {
                 return $this->error('Order must contain at least one item');
@@ -5587,14 +5413,14 @@ class ApiController extends BaseController
 
             // Generate order ID
             $orderId = 'ORDER_' . strtoupper(uniqid()) . '_' . time();
-            
+
             // In a real implementation, you would:
             // 1. Validate inventory availability
             // 2. Process payment with payment gateway
             // 3. Save order to database
             // 4. Send confirmation email
             // 5. Update inventory
-            
+
             // For demo purposes, we'll simulate a successful order
             $order = [
                 'order_id' => $orderId,
@@ -5632,7 +5458,6 @@ class ApiController extends BaseController
                     'Estimated delivery: ' . $order['estimated_delivery']
                 ]
             ], 'Order submitted successfully');
-
         } catch (\Exception $e) {
             Log::error('Order submission failed', [
                 'error' => $e->getMessage(),
