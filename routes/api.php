@@ -87,7 +87,7 @@ Route::middleware([JwtMiddleware::class])->group(function () {
     Route::get('get-milestone-gift-suggestions', [ApiController::class, 'get_milestone_gift_suggestions']);
     Route::post('save-milestone-reminder', [ApiController::class, 'save_milestone_reminder']);
 
-    // Phase 6.2: Chat Safety & Moderation endpoints
+    // Phase 6.2: Chat Safety & Moderation endpoints //
     Route::post('analyze-message-safety', [ApiController::class, 'analyzeMessageSafety']);
     Route::post('report-unsafe-behavior', [ApiController::class, 'reportUnsafeBehavior']);
     Route::post('verify-meetup-consent', [ApiController::class, 'verifyMeetupConsent']);
