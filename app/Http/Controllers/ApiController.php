@@ -730,7 +730,7 @@ class ApiController extends BaseController
                 break;
 
             case 'photo':
-                // Handle photo file upload using Utils::upload_images_2 or accept previewed file
+                // Handle photo file upload using Utils::upload_images_2 or accept previewed file or direct photo URL
                 if (isset($_FILES['photo']) && !empty($_FILES['photo']['name'])) {
                     // Direct upload (for backward compatibility)
                     $uploaded_file = Utils::upload_images_2([$_FILES['photo']], true);
@@ -741,6 +741,9 @@ class ApiController extends BaseController
                 } else if (!empty($r->preview_file_name)) {
                     // Use previewed file
                     $chat_message->photo = $r->preview_file_name;
+                } else if (!empty($r->photo)) {
+                    // Use direct photo URL from Flutter app
+                    $chat_message->photo = $r->photo;
                 } else {
                     return $this->error('Photo file is required for photo messages.');
                 }
@@ -751,7 +754,7 @@ class ApiController extends BaseController
                 break;
 
             case 'video':
-                // Handle video file upload using Utils::upload_images_2 or accept previewed file
+                // Handle video file upload using Utils::upload_images_2 or accept previewed file or direct video URL
                 if (isset($_FILES['video']) && !empty($_FILES['video']['name'])) {
                     // Direct upload (for backward compatibility)
                     $uploaded_file = Utils::upload_images_2([$_FILES['video']], true);
@@ -762,6 +765,9 @@ class ApiController extends BaseController
                 } else if (!empty($r->preview_file_name)) {
                     // Use previewed file
                     $chat_message->video = $r->preview_file_name;
+                } else if (!empty($r->video)) {
+                    // Use direct video URL from Flutter app
+                    $chat_message->video = $r->video;
                 } else {
                     return $this->error('Video file is required for video messages.');
                 }
@@ -773,7 +779,7 @@ class ApiController extends BaseController
                 break;
 
             case 'audio':
-                // Handle audio file upload using Utils::upload_images_2 or accept previewed file
+                // Handle audio file upload using Utils::upload_images_2 or accept previewed file or direct audio URL
                 if (isset($_FILES['audio']) && !empty($_FILES['audio']['name'])) {
                     // Direct upload (for backward compatibility)
                     $uploaded_file = Utils::upload_images_2([$_FILES['audio']], true);
@@ -784,6 +790,9 @@ class ApiController extends BaseController
                 } else if (!empty($r->preview_file_name)) {
                     // Use previewed file
                     $chat_message->audio = $r->preview_file_name;
+                } else if (!empty($r->audio)) {
+                    // Use direct audio URL from Flutter app
+                    $chat_message->audio = $r->audio;
                 } else {
                     return $this->error('Audio file is required for audio messages.');
                 }
