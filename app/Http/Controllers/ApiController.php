@@ -3458,6 +3458,7 @@ class ApiController extends BaseController
 
         if ($r->code == null) {
             Utils::error("Secret code is required.");
+            //latest changes
         }
 
         //check if email is provided
