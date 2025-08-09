@@ -20,6 +20,8 @@ Route::post('api/{model}', [ApiController::class, 'my_update']);
 Route::get('api/{model}', [ApiController::class, 'my_list']);
 Route::get('products-1', [ApiController::class, 'products_1']);
 Route::post('file-uploading', [ApiController::class, 'file_uploading']);
+Route::get("delivery-addresses", [ApiController::class, "delivery_addresses"]);
+Route::post("orders-create", [ApiController::class, "orders_create"]);
 
 // Profile Photo Management Endpoints
 Route::middleware([JwtMiddleware::class])->group(function () {

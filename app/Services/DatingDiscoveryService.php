@@ -21,10 +21,10 @@ class DatingDiscoveryService
             ->where('account_status', 'Active');
 
         // Apply all discovery filters
-        $this->applyBasicFilters($query, $currentUser, $request);
-        $this->applyLocationFilters($query, $currentUser, $request);
-        $this->applyPreferenceFilters($query, $currentUser, $request);
-        $this->applyCompatibilityFilters($query, $currentUser, $request);
+        // $this->applyBasicFilters($query, $currentUser, $request);
+        // $this->applyLocationFilters($query, $currentUser, $request);
+        // $this->applyPreferenceFilters($query, $currentUser, $request);
+        // $this->applyCompatibilityFilters($query, $currentUser, $request);
         $this->excludeBlockedAndLikedUsers($query, $currentUser);
         
         // Apply sorting
