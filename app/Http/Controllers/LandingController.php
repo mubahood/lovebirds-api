@@ -14,14 +14,14 @@ class LandingController extends Controller
     public function index()
     {
         return view('landing.index', [
-            'siteName' => env('LANDING_SITE_NAME', 'UGFlix'),
-            'companyName' => env('LANDING_COMPANY_NAME', 'UGFlix Ltd'),
+            'siteName' => env('LANDING_SITE_NAME', 'Lovebirds Dating'),
+            'companyName' => env('LANDING_COMPANY_NAME', 'Lovebirds Dating Ltd'),
             'appStoreUrl' => env('LANDING_APP_STORE_URL', 'https://apps.apple.com/ug/app/hambren/id6475098479'),
-            'playStoreUrl' => env('LANDING_PLAY_STORE_URL', 'https://play.google.com/store/apps/details?id=ugflix.com&hl=en'),
-            'facebookUrl' => env('LANDING_FACEBOOK_URL', 'https://facebook.com/ugflix'),
-            'twitterUrl' => env('LANDING_TWITTER_URL', 'https://twitter.com/ugflix'),
-            'instagramUrl' => env('LANDING_INSTAGRAM_URL', 'https://instagram.com/ugflix'),
-            'youtubeUrl' => env('LANDING_YOUTUBE_URL', 'https://youtube.com/@ugflix'),
+            'playStoreUrl' => env('LANDING_PLAY_STORE_URL', 'https://play.google.com/store/apps/details?id=Lovebirds Dating.com&hl=en'),
+            'facebookUrl' => env('LANDING_FACEBOOK_URL', 'https://facebook.com/Lovebirds Dating'),
+            'twitterUrl' => env('LANDING_TWITTER_URL', 'https://twitter.com/Lovebirds Dating'),
+            'instagramUrl' => env('LANDING_INSTAGRAM_URL', 'https://instagram.com/Lovebirds Dating'),
+            'youtubeUrl' => env('LANDING_YOUTUBE_URL', 'https://youtube.com/@Lovebirds Dating'),
         ]);
     }
 

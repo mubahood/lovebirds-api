@@ -91,7 +91,7 @@ class TrendingNotification extends Model
         if($trending->is_sent != 'Yes'){
             try {
                 Utils::sendNotificationToAll([
-                    'title' => 'UGFLIX ' . ucfirst($day_time) . ' Trening Movie - '.$trending->title,
+                    'title' => 'Lovebirds Dating ' . ucfirst($day_time) . ' Trening Movie - '.$trending->title,
                     'body' => 'Watch the trending movie this ' . ucfirst($day_time) . ': "' . $trending->title . '"! Don\'t miss out on the excitement!',
                     'image' => $trending->image_url,
                     'url' => $trending->url,

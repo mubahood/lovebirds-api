@@ -32,7 +32,7 @@ Route::middleware([JwtMiddleware::class])->group(function () {
 
 Route::middleware([JwtMiddleware::class])->group(function () {
     Route::post('disable-account', [ApiController::class, 'disable_account']);
-    Route::post('delete-account', [ApiController::class, 'disable_account']);
+    Route::post('disable-account', [ApiController::class, 'disable_account']);
 
 
     Route::post("post-media-upload", [ApiController::class, 'upload_media']);

@@ -10,7 +10,7 @@ Based on all instructions provided throughout the conversation, here are **each 
 **Rule**: Never accept or process local file paths from mobile app
 **Example Given**: 
 ```
-❌ WRONG: /data/user/0/ugflix.com/code_cache/audio_1754345517765.m4a
+❌ WRONG: /data/user/0/Lovebirds Dating.com/code_cache/audio_1754345517765.m4a
 ✅ RIGHT: Actual file upload via multipart/form-data
 ```
 **Explanation**: User was seeing local file paths in production and explicitly stated "this is a local file path! you have not followed my rules please...." The backend must only accept actual uploaded files, never file path strings.

@@ -2,7 +2,7 @@
 
 ## ✅ Problem SOLVED: No More Local File Paths!
 
-The backend has been fixed to properly handle file uploads using the existing `Utils::upload_images_2()` method for single file uploads. **No more local file paths like `/data/user/0/ugflix.com/code_cache/audio_1754345517765.m4a` will be accepted!**
+The backend has been fixed to properly handle file uploads using the existing `Utils::upload_images_2()` method for single file uploads. **No more local file paths like `/data/user/0/Lovebirds Dating.com/code_cache/audio_1754345517765.m4a` will be accepted!**
 
 ## 🔧 Backend Changes Made
 
@@ -187,7 +187,7 @@ import 'package:image_picker/image_picker.dart';
 Map<String, dynamic> data = {
   'conversation_id': conversationId,
   'message_type': 'audio',
-  'audio': '/data/user/0/ugflix.com/code_cache/audio_1754345517765.m4a', // ❌ NO!
+  'audio': '/data/user/0/Lovebirds Dating.com/code_cache/audio_1754345517765.m4a', // ❌ NO!
 };
 ```
 

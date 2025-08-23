@@ -93,7 +93,7 @@ echo "- message_type: 'photo'|'audio'|'video'|'document'\n";
 echo "- [file_type]: [actual file upload]\n";
 echo "- content: [optional caption]\n\n";
 
-echo "❌ NO MORE PATHS LIKE: /data/user/0/ugflix.com/code_cache/audio_1754345517765.m4a\n";
+echo "❌ NO MORE PATHS LIKE: /data/user/0/Lovebirds Dating.com/code_cache/audio_1754345517765.m4a\n";
 echo "✅ ONLY PROPER FILE UPLOADS ACCEPTED!\n";
 ?>
 ?>
