@@ -219,6 +219,12 @@ class ApiController extends BaseController
         if ($u == null) {
             Utils::error("Not authonticated.");
         }
+        if ($u->id == 1) {
+            return $this->error("You cannot delete Super Admin Account. Create another account that can be deleted.");
+        }
+        $u->delete();
+        return $this->success(null, 'Account deleted successfully.');
+
         $administrator_id = $u->id;
 
         $u = Administrator::find($administrator_id);
