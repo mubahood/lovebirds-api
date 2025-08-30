@@ -322,6 +322,23 @@ class PhotoLikeService
      */
     public function getSwipeStats(User $currentUser)
     {
+        // Get today's usage
+        $today = Carbon::today();
+        $dailyLikesUsed = $this->getDailyLikesUsed($currentUser);
+        $dailySuperLikesUsed = UserLike::where('liker_id', $currentUser->id)
+            ->where('type', 'super_like')
+            ->whereDate('created_at', $today)
+            ->count();
+
+        // Calculate limits based on subscription
+        $isSubscribed = $currentUser->hasActiveSubscription();
+        $dailyLikeLimit = $isSubscribed ? 999 : 10; // Updated: 10 likes for free users
+        $dailySuperLikeLimit = $isSubscribed ? 999 : 1; // 1 super like for free users
+        $dailyMessageLimit = $isSubscribed ? 999 : 10; // 10 messages for free users
+
+        // Get daily messages used
+        $dailyMessagesUsed = \App\Models\ChatMessage::getDailyMessagesCount($currentUser->id);
+
         $stats = [
             'total_likes_sent' => UserLike::where('liker_id', $currentUser->id)
                 ->whereIn('type', ['like', 'super_like'])
@@ -350,8 +367,34 @@ class PhotoLikeService
                 ->where('status', 'Active')
                 ->count(),
 
-            'daily_likes_used' => $this->getDailyLikesUsed($currentUser),
-            'daily_likes_remaining' => $this->getRemainingDailyLikes($currentUser),
+            // Enhanced daily statistics for orbital swipe
+            'daily_likes_used' => $dailyLikesUsed,
+            'daily_super_likes_used' => $dailySuperLikesUsed,
+            'daily_messages_used' => $dailyMessagesUsed, // New: message usage
+            'daily_likes_remaining' => max(0, $dailyLikeLimit - $dailyLikesUsed),
+            'daily_super_likes_remaining' => max(0, $dailySuperLikeLimit - $dailySuperLikesUsed),
+            'daily_messages_remaining' => max(0, $dailyMessageLimit - $dailyMessagesUsed), // New: messages remaining
+            'likesRemaining' => max(0, $dailyLikeLimit - $dailyLikesUsed), // For mobile app compatibility
+            'messagesRemaining' => max(0, $dailyMessageLimit - $dailyMessagesUsed), // New: for mobile app
+            'superLikesRemaining' => max(0, $dailySuperLikeLimit - $dailySuperLikesUsed), // For mobile app compatibility
+
+            // Orbital swipe specific data
+            'orbital_stats' => [
+                'can_like' => ($dailyLikeLimit - $dailyLikesUsed) > 0,
+                'can_super_like' => ($dailySuperLikeLimit - $dailySuperLikesUsed) > 0,
+                'can_message' => ($dailyMessageLimit - $dailyMessagesUsed) > 0, // New: message availability
+                'subscription_status' => $isSubscribed ? 'premium' : 'free',
+                'daily_limits' => [
+                    'likes' => $dailyLikeLimit,
+                    'super_likes' => $dailySuperLikeLimit,
+                    'messages' => $dailyMessageLimit, // New: message limit
+                ],
+                'usage_percentage' => [
+                    'likes' => $dailyLikeLimit > 0 ? round(($dailyLikesUsed / $dailyLikeLimit) * 100, 1) : 0,
+                    'super_likes' => $dailySuperLikeLimit > 0 ? round(($dailySuperLikesUsed / $dailySuperLikeLimit) * 100, 1) : 0,
+                    'messages' => $dailyMessageLimit > 0 ? round(($dailyMessagesUsed / $dailyMessageLimit) * 100, 1) : 0, // New: message usage %
+                ]
+            ],
 
             'match_rate' => $this->calculateMatchRate($currentUser)
         ];
@@ -577,7 +620,7 @@ class PhotoLikeService
 
     private function checkDailyLimits(User $currentUser, $action)
     {
-        $dailyLimit = $action === 'super_like' ? 1 : 50; // Free users: 50 likes, 1 super like per day
+        $dailyLimit = $action === 'super_like' ? 1 : 10; // Updated: Free users get 10 likes, 1 super like per day
         $usedToday = $this->getDailyLikesUsed($currentUser, $action);
 
         if ($usedToday >= $dailyLimit) {
@@ -607,7 +650,7 @@ class PhotoLikeService
             return 'unlimited';
         }
 
-        $dailyLimit = 50;
+        $dailyLimit = 10; // Updated from 50 to 10
         $used = $this->getDailyLikesUsed($currentUser, 'like');
         return max(0, $dailyLimit - $used);
     }

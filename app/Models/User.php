@@ -57,21 +57,25 @@ class User extends Administrator implements JWTSubject
             if ($name != null && strlen($name) > 0) {
                 $model->name = $name;
             }
-            $model->username = $model->email;
+            
+            // Set username to email if username is null or empty
+            if (empty($model->username)) {
+                $model->username = $model->email;
+            }
 
             if ($model->password == null || strlen($model->password) < 3) {
                 $model->password = bcrypt('admin');
             }
 
-            if ($model->phone_number == null && strlen($model->phone_number) > 6) {
+            if ($model->phone_number != null && strlen($model->phone_number) > 6) {
                 $phone_number = $model->phone_number;
                 $existing_user = User::where('phone_number', $phone_number)->first();
                 if ($existing_user != null) {
-                    throw new \Exception('Phone number already exists');
+                    // throw new \Exception('Phone number already exists');
                 }
             }
 
-            if ($model->email == null && strlen($model->email) > 6) {
+            if ($model->email != null && strlen($model->email) > 6) {
                 $email = $model->email;
                 $existing_user = User::where('email', $email)->first();
                 if ($existing_user != null) {
@@ -80,7 +84,7 @@ class User extends Administrator implements JWTSubject
             }
 
             //do the same for username
-            if ($model->username == null && strlen($model->username) > 6) {
+            if ($model->username != null && strlen($model->username) > 6) {
                 $username = $model->username;
                 $existing_user = User::where('username', $username)->first();
                 if ($existing_user != null) {
@@ -106,22 +110,22 @@ class User extends Administrator implements JWTSubject
                 $model->name = $name;
             }
 
-            if ($model->phone_number == null && strlen($model->phone_number) > 6) {
+            if ($model->phone_number != null && strlen($model->phone_number) > 6) {
                 $phone_number = $model->phone_number;
                 $existing_user = User::where('phone_number', $phone_number)->where('id', '!=', $model->id)->first();
                 if ($existing_user != null) {
-                    throw new \Exception('Phone number already exists');
+                    // throw new \Exception('Phone number already exists');
                 }
             }
-            if ($model->email == null && strlen($model->email) > 6) {
+            if ($model->email != null && strlen($model->email) > 6) {
                 $email = $model->email;
                 $existing_user = User::where('email', $email)->where('id', '!=', $model->id)->first();
                 if ($existing_user != null) {
-                    throw new \Exception('Email already exists');
+                    // throw new \Exception('Email already exists');
                 }
             }
             //do the same for username
-            if ($model->username == null && strlen($model->username) > 6) {
+            if ($model->username != null && strlen($model->username) > 6) {
                 $username = $model->username;
                 $existing_user = User::where('username', $username)->where('id', '!=', $model->id)->first();
                 if ($existing_user != null) {
@@ -129,7 +133,11 @@ class User extends Administrator implements JWTSubject
                 }
             }
 
-            $model->username = $model->email;
+            // Set username to email if username is null or empty
+            if (empty($model->username)) {
+                $model->username = $model->email;
+            }
+            
             return $model;
         });
 
@@ -653,7 +661,7 @@ class User extends Administrator implements JWTSubject
             return 'unlimited';
         }
 
-        $dailyLimit = 50;
+        $dailyLimit = 10; // Updated from 50 to 10 for free users
         $used = \App\Models\UserLike::getDailyLikesCount($this->id, 'like');
         return max(0, $dailyLimit - $used);
     }
@@ -685,6 +693,28 @@ class User extends Administrator implements JWTSubject
     {
         $remaining = $this->getDailySuperLikesRemaining();
         return is_numeric($remaining) && $remaining <= 0;
+    }
+
+    // Get daily messages remaining
+    public function getDailyMessagesRemaining()
+    {
+        if ($this->hasActiveSubscription()) {
+            return 'unlimited';
+        }
+
+        $dailyLimit = 10; // Free users get 10 messages per day
+        $used = \App\Models\ChatMessage::getDailyMessagesCount($this->id);
+        return max(0, $dailyLimit - $used);
+    }
+
+    // Check if user has reached daily message limit
+    public function hasReachedDailyMessageLimit()
+    {
+        if ($this->hasActiveSubscription()) {
+            return false;
+        }
+
+        return $this->getDailyMessagesRemaining() <= 0;
     }
     
     // Get distance between users (if both have coordinates)

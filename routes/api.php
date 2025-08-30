@@ -13,6 +13,9 @@ Route::post('auth/register', [ApiController::class, 'register']);
 Route::post('auth/request-password-reset-code', [ApiController::class, 'request_password_reset_code']);
 Route::post('auth/login', [ApiController::class, 'login']);
 
+// Stripe webhook (no authentication required)
+Route::post('stripe-webhook', [ApiController::class, 'stripe_webhook']);
+
 // Content filtering endpoint (used by app's automated systems)
 Route::post('moderation/filter-content', [ModerationController::class, 'filterContent']);
 
@@ -42,6 +45,11 @@ Route::middleware([JwtMiddleware::class])->group(function () {
 
     // Cart & Order Management
     Route::post('cart/submit-order', [ApiController::class, 'submit_order']);
+    
+    // Order Management Endpoints
+    Route::get("my-orders", [ApiController::class, "my_orders"]);
+    Route::get("order-details", [ApiController::class, "order_details"]);
+    Route::post("generate-payment-link", [ApiController::class, "generate_payment_link"]);
 
     Route::get('me', [ApiController::class, 'me']);
     Route::get('manifest', [ApiController::class, 'manifest']);
@@ -103,6 +111,7 @@ Route::middleware([JwtMiddleware::class])->group(function () {
     Route::get('discovery-stats', [ApiController::class, 'discovery_stats']);
     Route::get('smart-recommendations', [ApiController::class, 'smart_recommendations']);
     Route::get('swipe-discovery', [ApiController::class, 'swipe_discovery']);
+    Route::get('swipe-discovery-batch', [ApiController::class, 'swipe_discovery_batch']); // NEW: For orbital swipe
     Route::get('search-users', [ApiController::class, 'search_users']);
     Route::get('nearby-users', [ApiController::class, 'nearby_users']);
 

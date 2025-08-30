@@ -69,6 +69,11 @@ class UserMatch extends Model
         return $this->belongsTo(User::class, 'unmatched_by');
     }
 
+    public function chatHead()
+    {
+        return $this->hasOne(ChatHead::class, 'match_id');
+    }
+
     public function getChatHead()
     {
         return ChatHead::where(function($query) {

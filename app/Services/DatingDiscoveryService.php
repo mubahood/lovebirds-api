@@ -313,6 +313,79 @@ class DatingDiscoveryService
                 break;
 
             case 'smart':
+            case 'orbital_smart': // NEW: Enhanced sorting for orbital display
+                // Orbital smart sorting: optimized for circular layout with enhanced metrics
+                if ($currentUser->latitude && $currentUser->longitude) {
+                    $query->selectRaw("*, 
+                        (6371 * acos(
+                            cos(radians(?)) * cos(radians(latitude)) * 
+                            cos(radians(longitude) - radians(?)) + 
+                            sin(radians(?)) * sin(radians(latitude))
+                        )) as distance,
+                        CASE 
+                            WHEN last_online_at > ? THEN 4
+                            WHEN last_online_at > ? THEN 3
+                            WHEN last_online_at > ? THEN 2
+                            WHEN last_online_at > ? THEN 1
+                            ELSE 0
+                        END as activity_score,
+                        CASE 
+                            WHEN profile_photos IS NOT NULL AND JSON_LENGTH(profile_photos) >= 3 THEN 2
+                            WHEN profile_photos IS NOT NULL AND JSON_LENGTH(profile_photos) >= 1 THEN 1
+                            ELSE 0
+                        END as photo_score,
+                        CASE 
+                            WHEN bio IS NOT NULL AND LENGTH(bio) > 50 THEN 2
+                            WHEN bio IS NOT NULL AND LENGTH(bio) > 0 THEN 1
+                            ELSE 0
+                        END as bio_score", [
+                            $currentUser->latitude,
+                            $currentUser->longitude,
+                            $currentUser->latitude,
+                            now()->subMinutes(15), // Online now
+                            now()->subHours(1),    // Online in last hour
+                            now()->subDays(1),     // Online in last day
+                            now()->subDays(7)      // Online in last week
+                        ]);
+                    
+                    if ($sortBy === 'orbital_smart') {
+                        // Enhanced orbital sorting with randomization for better visual distribution
+                        $query->orderByRaw('
+                            (activity_score * 15 + photo_score * 10 + bio_score * 5 + 
+                             (100 - LEAST(distance, 100)) + RAND() * 10) DESC
+                        ');
+                    } else {
+                        // Standard smart sorting
+                        $query->orderByRaw('(activity_score * 10 + (100 - LEAST(distance, 100))) DESC');
+                    }
+                } else {
+                    // Fallback when no location data
+                    $query->selectRaw("*,
+                        CASE 
+                            WHEN last_online_at > ? THEN 4
+                            WHEN last_online_at > ? THEN 3
+                            WHEN last_online_at > ? THEN 2
+                            WHEN last_online_at > ? THEN 1
+                            ELSE 0
+                        END as activity_score,
+                        CASE 
+                            WHEN profile_photos IS NOT NULL AND JSON_LENGTH(profile_photos) >= 3 THEN 2
+                            WHEN profile_photos IS NOT NULL AND JSON_LENGTH(profile_photos) >= 1 THEN 1
+                            ELSE 0
+                        END as photo_score", [
+                            now()->subMinutes(15),
+                            now()->subHours(1),
+                            now()->subDays(1),
+                            now()->subDays(7)
+                        ]);
+                    
+                    if ($sortBy === 'orbital_smart') {
+                        $query->orderByRaw('(activity_score * 15 + photo_score * 10 + RAND() * 20) DESC');
+                    } else {
+                        $query->orderBy('last_online_at', 'desc');
+                    }
+                }
+                break;
             default:
                 // Smart sorting: combine multiple factors
                 if ($currentUser->latitude && $currentUser->longitude) {
@@ -418,7 +491,28 @@ class DatingDiscoveryService
      */
     public function getDiscoveryStats(User $user)
     {
+        // Get today's swipe counts for orbital display
+        $today = Carbon::today();
+        $todayLikes = UserLike::where('liker_id', $user->id)
+            ->whereDate('created_at', $today)
+            ->whereIn('type', ['like'])
+            ->count();
+            
+        $todaySuperLikes = UserLike::where('liker_id', $user->id)
+            ->whereDate('created_at', $today)
+            ->whereIn('type', ['super_like'])
+            ->count();
+
+        // Calculate remaining daily limits
+        $dailyLikeLimit = $user->hasActiveSubscription() ? 999 : 50;
+        $dailySuperLikeLimit = $user->hasActiveSubscription() ? 999 : 5;
+        
+        $likesRemaining = max(0, $dailyLikeLimit - $todayLikes);
+        $superLikesRemaining = max(0, $dailySuperLikeLimit - $todaySuperLikes);
+
+        // Enhanced stats for orbital swipe
         return [
+            // Basic discovery stats
             'total_potential_matches' => $this->discoverUsers($user, new Request())->count(),
             'new_users_this_week' => User::where('created_at', '>=', now()->subWeek())
                 ->where('id', '!=', $user->id)
@@ -439,7 +533,59 @@ class DatingDiscoveryService
                 ->where('id', '!=', $user->id)
                 ->where('account_status', 'Active')
                 ->count()
-                : 0
+                : 0,
+
+            // Orbital swipe specific stats
+            'daily_stats' => [
+                'likes_used' => $todayLikes,
+                'super_likes_used' => $todaySuperLikes,
+                'likes_remaining' => $likesRemaining,
+                'super_likes_remaining' => $superLikesRemaining,
+                'daily_like_limit' => $dailyLikeLimit,
+                'daily_super_like_limit' => $dailySuperLikeLimit,
+                'can_like' => $likesRemaining > 0,
+                'can_super_like' => $superLikesRemaining > 0,
+            ],
+
+            // User engagement stats
+            'engagement_stats' => [
+                'total_likes_sent' => UserLike::where('liker_id', $user->id)
+                    ->whereIn('type', ['like', 'super_like'])
+                    ->count(),
+                'total_matches' => UserMatch::where(function($q) use ($user) {
+                    $q->where('user_id', $user->id)
+                      ->orWhere('matched_user_id', $user->id);
+                })->where('status', 'Active')->count(),
+                'likes_received_today' => UserLike::where('liked_user_id', $user->id)
+                    ->whereDate('created_at', $today)
+                    ->count(),
+                'profile_views_today' => 0, // Could be implemented later
+            ],
+
+            // Orbital display optimization
+            'orbital_optimization' => [
+                'optimal_batch_size' => min(8, max(4, $this->calculateOptimalBatchSize($user))),
+                'refresh_interval_seconds' => $user->hasActiveSubscription() ? 30 : 60,
+                'animation_speed_multiplier' => 1.0,
+                'priority_scoring_enabled' => true,
+            ]
         ];
+    }
+
+    /**
+     * Calculate optimal batch size for orbital display based on user activity
+     */
+    private function calculateOptimalBatchSize(User $user)
+    {
+        // Get user's recent activity level
+        $recentActivity = UserLike::where('liker_id', $user->id)
+            ->where('created_at', '>=', now()->subDays(7))
+            ->count();
+
+        // More active users get larger batches
+        if ($recentActivity >= 50) return 8;
+        if ($recentActivity >= 20) return 6;
+        if ($recentActivity >= 10) return 6;
+        return 4; // Minimum batch size
     }
 }

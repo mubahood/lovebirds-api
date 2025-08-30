@@ -4,11 +4,22 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Log;
 use Stripe\Customer;
 
 class Order extends Model
 {
     use HasFactory;
+    
+    protected $fillable = [
+        'user', 'order_state', 'temporary_id', 'amount', 'order_total', 
+        'total_amount', 'payment_confirmation', 'description', 'mail', 
+        'order_details', 'date_created', 'date_updated', 'delivery_district',
+        'customer_name', 'customer_phone_number_1', 'customer_phone_number_2', 
+        'customer_address', 'stripe_id', 'stripe_text', 'stripe_url', 
+        'stripe_paid', 'stripe_product_id', 'stripe_price_id'
+    ];
+    
     //boot
     public static function boot()
     {
@@ -35,54 +46,169 @@ class Order extends Model
 
     public function create_payment_link()
     {
-        $stripe = env('STRIPE_KEY');
+        $stripe_key = env('STRIPE_KEY');
         if (($this->stripe_id != null) && (strlen($this->stripe_id) > 0)) {
             return;
         }
 
-
-        $itmes = $this->get_items();
-        $line_items = [];
-        foreach ($itmes as $key => $item) {
-            $pro = Product::find($item->product);
-            if ($pro == null) {
-                continue;
-            }
-            if ($pro->stripe_price == null || strlen($pro->stripe_price) < 3) {
-                continue;
-            }
-            $line_items[] = [
-                'price' => $pro->stripe_price,
-                'quantity' => $item->qty,
-            ];
-        }
-        if (count($line_items) < 1) {
+        $items = $this->get_items();
+        if (count($items) < 1) {
             $this->delete();
             throw new \Exception("No items to create payment link");
             return;
         }
+
+        // Calculate and update total amount
+        $this->calculateTotalAmount();
+        
+        // Get customer information
+        $customer = $this->customer();
+        $customer_name = 'Guest Customer #' . $this->id;
+        
+        if ($customer) {
+            try {
+                // Convert customer to array to safely access fields
+                $customer_data = $customer->toArray();
+                
+                if (!empty($customer_data['first_name']) || !empty($customer_data['last_name'])) {
+                    $name_parts = array_filter([
+                        $customer_data['first_name'] ?? '',
+                        $customer_data['last_name'] ?? ''
+                    ]);
+                    $customer_name = implode(' ', $name_parts);
+                } elseif (!empty($customer_data['name'])) {
+                    $customer_name = $customer_data['name'];
+                } elseif (!empty($customer_data['email'])) {
+                    $customer_name = explode('@', $customer_data['email'])[0]; // Use email username part
+                }
+            } catch (\Exception $e) {
+                // If there's any issue accessing customer data, use fallback
+                $customer_name = 'Customer #' . $this->user;
+            }
+        }
+        
+        // Calculate total order amount (in cents for Stripe)
+        $total_amount = intval(floatval($this->total_amount) * 100);
+        
+        // Create product name: Order number + customer name
+        $product_name = "Order #{$this->id} - {$customer_name}";
+        
         $isSuccess = false;
         $resp = "";
-        $stripe = new \Stripe\StripeClient(
-            env('STRIPE_KEY')
-        );
+        $stripe = new \Stripe\StripeClient($stripe_key);
+        
         try {
+            // Create a Stripe product for this order
+            $product = $stripe->products->create([
+                'name' => $product_name,
+                'description' => $this->getOrderDescription(),
+                'metadata' => [
+                    'order_id' => $this->id,
+                    'customer_id' => $this->user,
+                    'lovebirds_source' => 'order_payment'
+                ]
+            ]);
+
+            // Create a price for this product
+            $price = $stripe->prices->create([
+                'unit_amount' => $total_amount,
+                'currency' => 'cad',
+                'product' => $product->id,
+                'metadata' => [
+                    'order_id' => $this->id,
+                    'order_total' => $this->total_amount
+                ]
+            ]);
+
+            // Create payment link using the dynamic price
             $resp = $stripe->paymentLinks->create([
                 'currency' => 'cad',
-                'line_items' => $line_items,
+                'line_items' => [
+                    [
+                        'price' => $price->id,
+                        'quantity' => 1,
+                    ]
+                ],
+                'metadata' => [
+                    'order_id' => $this->id,
+                    'customer_id' => $this->user,
+                    'order_total' => $this->total_amount
+                ],
+                'after_completion' => [
+                    'type' => 'redirect',
+                    'redirect' => [
+                        'url' => env('APP_URL', 'https://lovebirds.ca') . '/order-success?order_id=' . $this->id
+                    ]
+                ]
             ]);
+            
             $isSuccess = true;
+            
         } catch (\Throwable $th) {
             $isSuccess = false;
             $resp = $th->getMessage();
+            Log::error('Stripe payment link creation failed: ' . $th->getMessage(), [
+                'order_id' => $this->id,
+                'customer_id' => $this->user
+            ]);
         }
 
         if ($isSuccess) {
             $this->stripe_id = $resp->id;
             $this->stripe_url = $resp->url;
+            $this->stripe_product_id = $product->id ?? null;
+            $this->stripe_price_id = $price->id ?? null;
             $this->stripe_paid = 'No';
             $this->save();
+        } else {
+            throw new \Exception("Failed to create Stripe payment link: " . $resp);
         }
+    }
+
+    /**
+     * Calculate the total amount for this order
+     */
+    public function calculateTotalAmount()
+    {
+        $items = $this->get_items();
+        $total = 0;
+        
+        foreach ($items as $item) {
+            $total += floatval($item->amount); // item->amount is already item price * quantity
+        }
+        
+        // Apply tax (13% HST for Canada)
+        $tax = $total * 0.13;
+        $grand_total = $total + $tax;
+        
+        $this->total_amount = number_format($grand_total, 2, '.', '');
+        $this->order_total = $this->total_amount; // Keep order_total in sync
+        $this->save();
+        
+        return $grand_total;
+    }
+
+    /**
+     * Generate order description for Stripe product
+     */
+    private function getOrderDescription()
+    {
+        $items = $this->get_items();
+        $description = "LoveBirds Order containing: ";
+        $item_descriptions = [];
+        
+        foreach ($items as $item) {
+            $item_descriptions[] = "{$item->product_name} (Qty: {$item->qty})";
+        }
+        
+        $description .= implode(', ', $item_descriptions);
+        
+        // Limit description to 500 characters (Stripe limit)
+        if (strlen($description) > 500) {
+            $description = substr($description, 0, 497) . '...';
+        }
+        
+        return $description;
     }
     public function get_items()
     {
@@ -96,14 +222,16 @@ class Order extends Model
             if ($pro == null) {
                 continue;
             }
-            if ($_item->pro == null) {
-                continue;
-            }
-            $_item->product_name = $_item->pro->name;
-            $_item->product_feature_photo = $_item->pro->feature_photo;
-            $_item->product_price_1 = $_item->pro->price_1;
+            
+            // Add product information to the item
+            $_item->product_name = $pro->name;
+            $_item->product_feature_photo = $pro->feature_photo;
+            $_item->product_price_1 = $pro->price_1;
             $_item->product_quantity = $_item->qty;
-            $_item->product_id = $_item->pro->id;
+            $_item->product_id = $pro->id;
+            $_item->product_image = $pro->feature_photo; // Add this for frontend
+            $_item->product_price = $_item->amount; // Use actual order item price
+            
             $items[] = $_item;
         }
         return $items;

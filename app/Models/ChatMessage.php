@@ -312,4 +312,15 @@ class ChatMessage extends Model
                 return null;
         }
     }
+
+    // Get daily messages count for a user
+    public static function getDailyMessagesCount($userId)
+    {
+        $today = Carbon::now()->startOfDay();
+        $endOfDay = Carbon::now()->endOfDay();
+
+        return self::where('sender_id', $userId)
+            ->whereBetween('created_at', [$today, $endOfDay])
+            ->count();
+    }
 }

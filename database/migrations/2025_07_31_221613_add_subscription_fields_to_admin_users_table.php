@@ -12,11 +12,21 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('admin_users', function (Blueprint $table) {
+            if (!Schema::hasColumn('admin_users', 'subscription_status')) {
             $table->enum('subscription_status', ['free', 'pending', 'active', 'expired', 'cancelled'])->default('free');
+            }
+            if (!Schema::hasColumn('admin_users', 'subscription_plan')) {
             $table->enum('subscription_plan', ['weekly', 'monthly', 'quarterly'])->nullable();
+            }
+            if (!Schema::hasColumn('admin_users', 'subscription_expires_at')) {
             $table->datetime('subscription_expires_at')->nullable();
+            }
+            if (!Schema::hasColumn('admin_users', 'pending_stripe_payment_id')) {
             $table->string('pending_stripe_payment_id')->nullable();
+            }
+            if (!Schema::hasColumn('admin_users', 'subscription_updated_at')) {
             $table->timestamp('subscription_updated_at')->nullable();
+            }
         });
     }
 

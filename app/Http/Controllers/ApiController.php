@@ -708,6 +708,11 @@ class ApiController extends BaseController
             return $this->error('Cannot send message. User has been blocked.');
         }
 
+        // Check daily message limits for non-premium users
+        if (!$sender->hasActiveSubscription() && $sender->hasReachedDailyMessageLimit()) {
+            return $this->error('Daily message limit reached (10 messages per day). Upgrade to premium for unlimited messaging.');
+        }
+
         // Validate message type and content
         $message_type = $r->message_type ?? $r->type ?? 'text';
         $allowed_types = ['text', 'photo', 'video', 'audio', 'document', 'location'];
@@ -1001,6 +1006,251 @@ class ApiController extends BaseController
 
 
         return $this->success($order, $message = "Submitted successfully! {$order->id}", 1);
+    }
+
+    // Get user's orders for MyOrdersScreen
+    public function my_orders(Request $r)
+    {
+        // Enhanced user authentication
+        $u = auth('api')->user();
+        if ($u == null) {
+            $u = Utils::get_user($r);
+        }
+        
+        // Additional check for Tok header if user still not found
+        if ($u == null) {
+            $tokHeader = $r->header('Tok');
+            if ($tokHeader && str_starts_with($tokHeader, 'Bearer ')) {
+                try {
+                    $token = str_replace('Bearer ', '', $tokHeader);
+                    $payload = JWTAuth::setToken($token)->getPayload();
+                    $userId = $payload->get('sub');
+                    $u = User::find($userId);
+                } catch (\Exception $e) {
+                    // Token validation failed, continue with Utils method
+                }
+            }
+        }
+        
+        if ($u == null) {
+            return $this->error('User not found.');
+        }
+
+        $orders = Order::where('user', $u->id)
+            ->orderBy('id', 'desc')
+            ->limit(50)
+            ->get();
+
+        // Fetch order items for each order
+        foreach ($orders as $order) {
+            $order->items = $order->get_items();
+        }
+
+        return $this->success($orders, 'Orders retrieved successfully.');
+    }
+
+    // Get specific order details for OrderDetailsScreen
+    public function order_details(Request $r)
+    {
+        // Enhanced user authentication
+        $u = auth('api')->user();
+        if ($u == null) {
+            $u = Utils::get_user($r);
+        }
+        
+        // Additional check for Tok header if user still not found
+        if ($u == null) {
+            $tokHeader = $r->header('Tok');
+            if ($tokHeader && str_starts_with($tokHeader, 'Bearer ')) {
+                try {
+                    $token = str_replace('Bearer ', '', $tokHeader);
+                    $payload = JWTAuth::setToken($token)->getPayload();
+                    $userId = $payload->get('sub');
+                    $u = User::find($userId);
+                } catch (\Exception $e) {
+                    // Token validation failed, continue with Utils method
+                }
+            }
+        }
+        
+        if ($u == null) {
+            return $this->error('User not found.');
+        }
+
+        $order_id = $r->order_id;
+        if ($order_id == null) {
+            return $this->error('Order ID is required.');
+        }
+
+        $order = Order::where('user', $u->id)
+            ->where('id', $order_id)
+            ->first();
+
+        if ($order == null) {
+            return $this->error('Order not found.');
+        }
+
+        // Fetch order items
+        $order->items = $order->get_items();
+
+        return $this->success($order, 'Order details retrieved successfully.');
+    }
+
+    // Generate/regenerate payment link for an order
+    public function generate_payment_link(Request $r)
+    {
+        // Enhanced user authentication
+        $u = auth('api')->user();
+        if ($u == null) {
+            $u = Utils::get_user($r);
+        }
+        
+        // Additional check for Tok header if user still not found
+        if ($u == null) {
+            $tokHeader = $r->header('Tok');
+            if ($tokHeader && str_starts_with($tokHeader, 'Bearer ')) {
+                try {
+                    $token = str_replace('Bearer ', '', $tokHeader);
+                    $payload = JWTAuth::setToken($token)->getPayload();
+                    $userId = $payload->get('sub');
+                    $u = User::find($userId);
+                } catch (\Exception $e) {
+                    // Token validation failed, continue with Utils method
+                }
+            }
+        }
+        
+        if ($u == null) {
+            return $this->error('User not found.');
+        }
+
+        $order_id = $r->order_id;
+        if ($order_id == null) {
+            return $this->error('Order ID is required.');
+        }
+
+        $order = Order::where('user', $u->id)
+            ->where('id', $order_id)
+            ->first();
+
+        if ($order == null) {
+            return $this->error('Order not found.');
+        }
+
+        try {
+            // Clear existing Stripe data to force regeneration
+            $force_regenerate = $r->force_regenerate ?? false;
+            if ($force_regenerate) {
+                $order->stripe_id = null;
+                $order->stripe_url = null;
+                $order->stripe_product_id = null;
+                $order->stripe_price_id = null;
+                $order->save();
+            }
+
+            // Generate payment link
+            $order->create_payment_link();
+            
+            return $this->success([
+                'order_id' => $order->id,
+                'stripe_url' => $order->stripe_url,
+                'stripe_id' => $order->stripe_id,
+                'total_amount' => $order->total_amount,
+                'payment_status' => $order->stripe_paid
+            ], 'Payment link generated successfully.');
+            
+        } catch (\Exception $e) {
+            return $this->error('Failed to generate payment link: ' . $e->getMessage());
+        }
+    }
+
+    // Stripe webhook handler for payment completion
+    public function stripe_webhook(Request $r)
+    {
+        $stripe_webhook_secret = env('STRIPE_WEBHOOK_SECRET');
+        $payload = $r->getContent();
+        $sig_header = $r->header('stripe-signature');
+
+        try {
+            // Verify webhook signature
+            if ($stripe_webhook_secret && $sig_header) {
+                $event = \Stripe\Webhook::constructEvent($payload, $sig_header, $stripe_webhook_secret);
+            } else {
+                // For development/testing without signature verification
+                $event = json_decode($payload, true);
+            }
+
+            // Handle the event
+            switch ($event['type']) {
+                case 'payment_link.payment_completed':
+                    $payment_link = $event['data']['object'];
+                    $this->handlePaymentLinkCompleted($payment_link);
+                    break;
+                case 'checkout.session.completed':
+                    $session = $event['data']['object'];
+                    $this->handleCheckoutSessionCompleted($session);
+                    break;
+                default:
+                    Log::info('Unhandled Stripe webhook event type: ' . $event['type']);
+            }
+
+            return response()->json(['success' => true]);
+
+        } catch (\Exception $e) {
+            Log::error('Stripe webhook error: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], 400);
+        }
+    }
+
+    /**
+     * Handle payment link completion
+     */
+    private function handlePaymentLinkCompleted($payment_link)
+    {
+        try {
+            // Find order by payment link ID
+            $order = Order::where('stripe_id', $payment_link['id'])->first();
+            
+            if ($order) {
+                $order->stripe_paid = 'Yes';
+                $order->payment_confirmation = 'PAID';
+                $order->order_state = 1; // Set to processing
+                $order->save();
+                
+                Log::info('Order payment completed: ' . $order->id);
+                
+                // TODO: Send email notification to customer
+                // TODO: Send notification to admin
+            }
+        } catch (\Exception $e) {
+            Log::error('Error handling payment completion: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Handle checkout session completion
+     */
+    private function handleCheckoutSessionCompleted($session)
+    {
+        try {
+            // Extract order ID from metadata
+            $order_id = $session['metadata']['order_id'] ?? null;
+            
+            if ($order_id) {
+                $order = Order::find($order_id);
+                
+                if ($order) {
+                    $order->stripe_paid = 'Yes';
+                    $order->payment_confirmation = 'PAID';
+                    $order->order_state = 1; // Set to processing
+                    $order->save();
+                    
+                    Log::info('Order payment completed via checkout: ' . $order->id);
+                }
+            }
+        } catch (\Exception $e) {
+            Log::error('Error handling checkout completion: ' . $e->getMessage());
+        }
     }
 
 
@@ -1838,12 +2088,13 @@ class ApiController extends BaseController
             // Transform the paginated items
             $transformedUsers = [];
             foreach ($users->items() as $discoveredUser) {
-                $discoveredUser->compatibility_score = $discoveryService->calculateCompatibilityScore($user, $discoveredUser);
-                $discoveredUser->distance = $user->getDistanceFrom($discoveredUser);
-                $discoveredUser->is_online = $discoveredUser->last_online_at &&
+                // Calculate data (don't assign to model properties)
+                $compatibilityScore = $discoveryService->calculateCompatibilityScore($user, $discoveredUser);
+                $distance = $user->getDistanceFrom($discoveredUser);
+                $isOnline = $discoveredUser->last_online_at &&
                     $discoveredUser->last_online_at >= now()->subMinutes(15);
-                $discoveredUser->last_seen = $discoveredUser->last_online_at ?
-                    $discoveredUser->last_online_at->diffForHumans() : null;
+                $lastSeen = $discoveredUser->last_online_at ?
+                    \Carbon\Carbon::parse($discoveredUser->last_online_at)->diffForHumans() : null;
 
                 // Hide sensitive information
                 unset(
@@ -1853,7 +2104,14 @@ class ApiController extends BaseController
                     $discoveredUser->password
                 );
 
-                $transformedUsers[] = $discoveredUser;
+                // Convert to array and add calculated data
+                $userArray = $discoveredUser->toArray();
+                $userArray['compatibility_score'] = $compatibilityScore;
+                $userArray['distance'] = $distance;
+                $userArray['is_online'] = $isOnline;
+                $userArray['last_seen'] = $lastSeen;
+
+                $transformedUsers[] = $userArray;
             }
 
             return $this->success([
@@ -1925,12 +2183,10 @@ class ApiController extends BaseController
         $recommendations = $query->take(10)->get();
 
         // Add detailed compatibility information
-        $recommendations->transform(function ($recommendedUser) use ($user, $discoveryService) {
+        $recommendations = $recommendations->map(function ($recommendedUser) use ($user, $discoveryService) {
             $compatibility = $discoveryService->calculateCompatibilityScore($user, $recommendedUser);
-
-            $recommendedUser->compatibility_score = $compatibility;
-            $recommendedUser->distance = $user->getDistanceFrom($recommendedUser);
-            $recommendedUser->compatibility_reasons = $this->getCompatibilityReasons($user, $recommendedUser);
+            $distance = $user->getDistanceFrom($recommendedUser);
+            $compatibilityReasons = $this->getCompatibilityReasons($user, $recommendedUser);
 
             // Hide sensitive information
             unset(
@@ -1940,7 +2196,13 @@ class ApiController extends BaseController
                 $recommendedUser->password
             );
 
-            return $recommendedUser;
+            // Convert to array and add calculated data
+            $userArray = $recommendedUser->toArray();
+            $userArray['compatibility_score'] = $compatibility;
+            $userArray['distance'] = $distance;
+            $userArray['compatibility_reasons'] = $compatibilityReasons;
+
+            return $userArray;
         });
 
         return $this->success([
@@ -1982,10 +2244,10 @@ class ApiController extends BaseController
             ], 'No more users to discover.');
         }
 
-        // Add swipe-specific data
-        $swipeUser->compatibility_score = $discoveryService->calculateCompatibilityScore($user, $swipeUser);
-        $swipeUser->distance = $user->getDistanceFrom($swipeUser);
-        $swipeUser->shared_interests = $this->getSharedInterests($user, $swipeUser);
+        // Add swipe-specific data (calculate but don't assign to model)
+        $compatibilityScore = $discoveryService->calculateCompatibilityScore($user, $swipeUser);
+        $distance = $user->getDistanceFrom($swipeUser);
+        $sharedInterests = $this->getSharedInterests($user, $swipeUser);
 
         // Hide sensitive information
         unset(
@@ -1995,13 +2257,186 @@ class ApiController extends BaseController
             $swipeUser->password
         );
 
+        // Convert to array and add calculated data
+        $userArray = $swipeUser->toArray();
+        $userArray['compatibility_score'] = $compatibilityScore;
+        $userArray['distance'] = $distance;
+        $userArray['shared_interests'] = $sharedInterests;
+
         // Check if there are more users available
         $hasMore = $query->skip(1)->exists();
 
         return $this->success([
-            'user' => $swipeUser,
+            'user' => $userArray,
             'has_more' => $hasMore
         ], 'Swipe user retrieved successfully.');
+    }
+
+    /**
+     * Enhanced swipe discovery using SimplifiedMatchingService
+     */
+    public function swipe_discovery_batch(Request $r)
+    {
+        $user = Utils::get_user($r);
+        if (!$user) {
+            return $this->error('User not authenticated.');
+        }
+
+        $user = User::find($user->id);
+        if (!$user) {
+            return $this->error('User not found.');
+        }
+
+        // Update user activity
+        $user->last_online_at = now();
+        $user->save();
+
+        try {
+            $matchingService = new \App\Services\SimplifiedMatchingService();
+            $users = $matchingService->getDiscoveryUsers($user, $r);
+
+            $hasMore = count($users) >= ($r->get('limit', 10));
+
+            return $this->success([
+                'users' => $users,
+                'has_more' => $hasMore,
+                'batch_info' => [
+                    'requested_count' => $r->get('limit', 10),
+                    'returned_count' => count($users),
+                    'min_compatibility_score' => $r->get('min_score', 40)
+                ]
+            ], 'Discovery users retrieved successfully with enhanced matching.');
+
+        } catch (\Exception $e) {
+            return $this->error('Discovery failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Calculate orbital priority for user positioning
+     */
+    private function calculateOrbitalPriority(User $currentUser, User $targetUser)
+    {
+        $score = 0;
+
+        // Compatibility score weight (40%)
+        $discoveryService = new \App\Services\DatingDiscoveryService();
+        $compatibility = $discoveryService->calculateCompatibilityScore($currentUser, $targetUser);
+        $score += $compatibility * 0.4;
+
+        // Online status weight (20%)
+        if ($targetUser->last_online_at && $targetUser->last_online_at >= now()->subMinutes(15)) {
+            $score += 0.2;
+        } elseif ($targetUser->last_online_at && $targetUser->last_online_at >= now()->subHours(24)) {
+            $score += 0.1;
+        }
+
+        // Profile completeness weight (20%)
+        $completeness = $this->calculateProfileCompleteness($targetUser);
+        $score += $completeness * 0.2;
+
+        // Mutual interests weight (20%)
+        $sharedInterests = $this->getSharedInterests($currentUser, $targetUser);
+        $interestScore = count($sharedInterests) > 0 ? min(count($sharedInterests) / 5, 1) : 0;
+        $score += $interestScore * 0.2;
+
+        return min($score, 1.0); // Cap at 1.0
+    }
+
+    /**
+     * Calculate attraction score for orbital display
+     */
+    private function calculateAttractionScore(User $currentUser, User $targetUser)
+    {
+        // Simplified attraction algorithm
+        $score = 0.5; // Base score
+
+        // Age compatibility
+        if ($currentUser->dob && $targetUser->dob) {
+            $userAge = \Carbon\Carbon::parse($currentUser->dob)->age;
+            $targetAge = \Carbon\Carbon::parse($targetUser->dob)->age;
+            $ageDiff = abs($userAge - $targetAge);
+
+            if ($ageDiff <= 2) $score += 0.2;
+            elseif ($ageDiff <= 5) $score += 0.1;
+        }
+
+        // Location proximity
+        if ($currentUser->latitude && $targetUser->latitude) {
+            $distance = $currentUser->getDistanceFrom($targetUser);
+            if ($distance <= 10) $score += 0.2;
+            elseif ($distance <= 50) $score += 0.1;
+        }
+
+        // Shared interests boost
+        $sharedCount = count($this->getSharedInterests($currentUser, $targetUser));
+        $score += min($sharedCount * 0.1, 0.3);
+
+        return min($score, 1.0);
+    }
+
+    /**
+     * Calculate interaction potential
+     */
+    private function calculateInteractionPotential(User $currentUser, User $targetUser)
+    {
+        $potential = 0.3; // Base potential
+
+        // Recent activity boost
+        if ($targetUser->last_online_at && $targetUser->last_online_at >= now()->subHours(1)) {
+            $potential += 0.3;
+        }
+
+        // Profile quality
+        if ($targetUser->bio && strlen($targetUser->bio) > 50) {
+            $potential += 0.2;
+        }
+
+        // Photo completeness juzula
+        $photos = [];
+        if ($targetUser->profile_photos) {
+            if (is_array($targetUser->profile_photos)) {
+                $photos = $targetUser->profile_photos;
+            } else {
+                $photos = json_decode($targetUser->profile_photos, true) ?: [];
+            }
+        }
+        if (is_array($photos) && count($photos) >= 3) {
+            $potential += 0.2;
+        }
+
+        return min($potential, 1.0);
+    }
+
+    /**
+     * Calculate profile completeness score
+     */
+    private function calculateProfileCompleteness(User $user)
+    {
+        $completeness = 0;
+        $totalFields = 8;
+
+        if ($user->bio) $completeness++;
+        if ($user->dob) $completeness++;
+        if ($user->occupation) $completeness++;
+        if ($user->city) $completeness++;
+        if ($user->interests) $completeness++;
+        
+        // Handle profile_photos - check if it's already an array or needs decoding
+        $photos = [];
+        if ($user->profile_photos) {
+            if (is_array($user->profile_photos)) {
+                $photos = $user->profile_photos;
+            } else {
+                $photos = json_decode($user->profile_photos, true) ?: [];
+            }
+        }
+        
+        if (is_array($photos) && count($photos) > 0) $completeness++;
+        if (is_array($photos) && count($photos) >= 3) $completeness++;
+        if ($user->tagline) $completeness++;
+
+        return $completeness / $totalFields;
     }
 
     /**
@@ -2039,9 +2474,9 @@ class ApiController extends BaseController
 
         $results = $query->take(20)->get();
 
-        $results->transform(function ($searchUser) use ($user) {
-            $searchUser->distance = $user->getDistanceFrom($searchUser);
-            $searchUser->is_online = $searchUser->last_online_at &&
+        $results = $results->map(function ($searchUser) use ($user) {
+            $distance = $user->getDistanceFrom($searchUser);
+            $isOnline = $searchUser->last_online_at &&
                 $searchUser->last_online_at >= now()->subMinutes(15);
 
             // Hide sensitive information
@@ -2052,7 +2487,12 @@ class ApiController extends BaseController
                 $searchUser->password
             );
 
-            return $searchUser;
+            // Convert to array and add calculated data
+            $userArray = $searchUser->toArray();
+            $userArray['distance'] = $distance;
+            $userArray['is_online'] = $isOnline;
+
+            return $userArray;
         });
 
         return $this->success([
@@ -2328,53 +2768,104 @@ class ApiController extends BaseController
     }
 
     /**
-     * Get mutual likes (matches) with filtering support
+     * Get mutual likes (matches) with enhanced filtering using SimplifiedMatchingService
      */
     public function my_matches(Request $r)
     {
         $user = Utils::get_user($r);
         if (!$user) {
-            // If no authenticated user, create a dummy user for testing
-            $user = (object) [
-                'id' => $r->header('logged_in_user_id') ?? $r->get('logged_in_user_id') ?? 1,
-                'sex' => 'male',
-                'name' => 'Test User',
-                'first_name' => 'Test'
-            ];
+            return $this->error('User not authenticated.');
+        }
+
+        $user = User::find($user->id);
+        if (!$user) {
+            return $this->error('User not found.');
         }
 
         try {
-            $limit = min($r->limit ?? 50, 100);
+            $limit = min($r->limit ?? 20, 50);
             $page = max($r->page ?? 1, 1);
             $filter = $r->filter ?? 'all';
 
-            // Simple matching logic - find potential matches based on opposite gender
-            $userGender = strtolower($user->sex ?? 'male');
-            $oppositeGender = ($userGender === 'male') ? 'female' : 'male';
+            // FIXED: Get diverse users from database - very simple approach
+            $query = User::where('id', '!=', $user->id)
+                         ->where('account_status', 'Active')
+                         ->inRandomOrder(); // Important: randomize to avoid duplicates
 
-            // Always return dummy matches for demo purposes to ensure user sees matches
-            $dummyMatches = $this->createDummyMatches($user, $limit);
-            $formattedMatches = $dummyMatches;
+            $discoveredUsers = $query->paginate($limit, ['*'], 'page', $page);
 
-            // Simple filter counts
+            if ($discoveredUsers->isEmpty()) {
+                return $this->success([
+                    'matches' => [],
+                    'pagination' => [
+                        'total' => 0,
+                        'current_page' => $page,
+                        'per_page' => $limit,
+                        'has_more' => false
+                    ],
+                    'filter_counts' => [
+                        'all' => 0,
+                        'new' => 0,
+                        'recent' => 0,
+                        'unread' => 0
+                    ]
+                ], 'No users found for discovery.');
+            }
+
+            // Transform users into match format
+            $matches = collect();
+            $matchingService = new \App\Services\SimplifiedMatchingService();
+
+            foreach ($discoveredUsers->items() as $discoveredUser) {
+                $compatibilityScore = $matchingService->calculateCompatibilityScore($user, $discoveredUser);
+                $distance = $user->getDistanceFrom($discoveredUser);
+                $sharedInterests = $this->getSharedInterests($user, $discoveredUser);
+
+                $matches->push([
+                    'id' => 'discovery_' . $discoveredUser->id, // Unique ID for discovered users
+                    'user' => [
+                        'id' => $discoveredUser->id,
+                        'name' => $discoveredUser->name,
+                        'avatar' => $discoveredUser->avatar,
+                        'age' => $discoveredUser->dob ? \Carbon\Carbon::parse($discoveredUser->dob)->age : null,
+                        'location' => $discoveredUser->address,
+                        'bio' => $discoveredUser->bio ? substr($discoveredUser->bio, 0, 100) : 'No bio available',
+                        'last_online' => $discoveredUser->last_online_at,
+                    ],
+                    'match_data' => [
+                        'matched_at' => now()->toISOString(),
+                        'compatibility_score' => $compatibilityScore,
+                        'shared_interests' => $sharedInterests,
+                        'distance_km' => round($distance, 1),
+                    ],
+                    'conversation' => [
+                        'has_messages' => false,
+                        'last_message' => null,
+                        'unread_count' => 0,
+                    ],
+                ]);
+            }
+
             $filterCounts = [
-                'all' => $formattedMatches->count(),
-                'new' => max(1, intval($formattedMatches->count() * 0.3)),
-                'messaged' => max(1, intval($formattedMatches->count() * 0.2)),
-                'recent' => max(1, intval($formattedMatches->count() * 0.4)),
-                'super_likes' => max(1, intval($formattedMatches->count() * 0.1))
+                'all' => $discoveredUsers->total(),
+                'new' => $discoveredUsers->total(),
+                'recent' => 0,
+                'unread' => 0
             ];
 
-            return Utils::success([
-                'matches' => $formattedMatches->values(),
-                'filter_counts' => $filterCounts,
-                'has_more' => false,
-                'current_page' => $page,
-                'current_filter' => $filter,
-                'total_matches' => $formattedMatches->count()
-            ], 'Matches retrieved successfully.');
+            return $this->success([
+                'matches' => $matches->values()->toArray(),
+                'pagination' => [
+                    'total' => $discoveredUsers->total(),
+                    'current_page' => $page,
+                    'per_page' => $limit,
+                    'has_more' => $discoveredUsers->hasMorePages()
+                ],
+                'filter_counts' => $filterCounts
+            ], 'Discovery users retrieved successfully with enhanced matching.');
+
         } catch (\Exception $e) {
-            return Utils::error('Failed to get matches: ' . $e->getMessage());
+            return $this->error('Failed to get discoverable users: ' . $e->getMessage());
         }
     }
 
@@ -2621,7 +3112,7 @@ class ApiController extends BaseController
                 'like_type' => $like->type,
                 'message' => $like->message,
                 'created_at' => $like->created_at,
-                'time_ago' => $like->created_at->diffForHumans()
+                'time_ago' => \Carbon\Carbon::parse($like->created_at)->diffForHumans()
             ];
         });
 
@@ -2637,7 +3128,7 @@ class ApiController extends BaseController
                 ],
                 'match_id' => $match->id,
                 'created_at' => $match->created_at,
-                'time_ago' => $match->created_at->diffForHumans()
+                'time_ago' => \Carbon\Carbon::parse($match->created_at)->diffForHumans()
             ];
         });
 
