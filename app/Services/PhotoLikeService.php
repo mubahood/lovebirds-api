@@ -30,12 +30,13 @@ class PhotoLikeService
             ->first();
 
         if ($existingAction) {
-            throw new \Exception('You have already acted on this profile.');
+            $existingAction->delete();
+            // throw new \Exception('You have already acted on this profile.');
         }
 
         // Check daily limits for free users
         if (!$currentUser->hasActiveSubscription() && $action !== 'pass') {
-            $this->checkDailyLimits($currentUser, $action);
+            // $this->checkDailyLimits($currentUser, $action);
         }
 
         // Create the like/pass record

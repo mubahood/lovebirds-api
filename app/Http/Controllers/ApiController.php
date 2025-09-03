@@ -896,17 +896,22 @@ class ApiController extends BaseController
         $u = auth('api')->user();
 
 
-        if ($u != null) {
+        if ($u == null) {
             $u = Utils::get_user($r);
         }
-        $u = Utils::get_user($r);
+
         if ($u != null) {
             $u = User::find($u->id);
-            if ($u != null) {
+            if ($u == null) {
                 // $u->last_online_at = now();
                 // $u->save();
             }
         }
+
+        if ($u == null) {
+            return $this->error('User not found.');
+        }
+
 
         $items = [];
         try {
@@ -921,9 +926,6 @@ class ApiController extends BaseController
             }
         }
 
-        if ($u == null) {
-            return $this->error('User not found.');
-        }
 
         $delivery = null;
         try {
@@ -1016,7 +1018,7 @@ class ApiController extends BaseController
         if ($u == null) {
             $u = Utils::get_user($r);
         }
-        
+
         // Additional check for Tok header if user still not found
         if ($u == null) {
             $tokHeader = $r->header('Tok');
@@ -1031,7 +1033,7 @@ class ApiController extends BaseController
                 }
             }
         }
-        
+
         if ($u == null) {
             return $this->error('User not found.');
         }
@@ -1057,7 +1059,7 @@ class ApiController extends BaseController
         if ($u == null) {
             $u = Utils::get_user($r);
         }
-        
+
         // Additional check for Tok header if user still not found
         if ($u == null) {
             $tokHeader = $r->header('Tok');
@@ -1072,7 +1074,7 @@ class ApiController extends BaseController
                 }
             }
         }
-        
+
         if ($u == null) {
             return $this->error('User not found.');
         }
@@ -1104,7 +1106,7 @@ class ApiController extends BaseController
         if ($u == null) {
             $u = Utils::get_user($r);
         }
-        
+
         // Additional check for Tok header if user still not found
         if ($u == null) {
             $tokHeader = $r->header('Tok');
@@ -1119,7 +1121,7 @@ class ApiController extends BaseController
                 }
             }
         }
-        
+
         if ($u == null) {
             return $this->error('User not found.');
         }
@@ -1150,7 +1152,7 @@ class ApiController extends BaseController
 
             // Generate payment link
             $order->create_payment_link();
-            
+
             return $this->success([
                 'order_id' => $order->id,
                 'stripe_url' => $order->stripe_url,
@@ -1158,7 +1160,6 @@ class ApiController extends BaseController
                 'total_amount' => $order->total_amount,
                 'payment_status' => $order->stripe_paid
             ], 'Payment link generated successfully.');
-            
         } catch (\Exception $e) {
             return $this->error('Failed to generate payment link: ' . $e->getMessage());
         }
@@ -1195,7 +1196,6 @@ class ApiController extends BaseController
             }
 
             return response()->json(['success' => true]);
-
         } catch (\Exception $e) {
             Log::error('Stripe webhook error: ' . $e->getMessage());
             return response()->json(['error' => $e->getMessage()], 400);
@@ -1210,15 +1210,15 @@ class ApiController extends BaseController
         try {
             // Find order by payment link ID
             $order = Order::where('stripe_id', $payment_link['id'])->first();
-            
+
             if ($order) {
                 $order->stripe_paid = 'Yes';
                 $order->payment_confirmation = 'PAID';
                 $order->order_state = 1; // Set to processing
                 $order->save();
-                
+
                 Log::info('Order payment completed: ' . $order->id);
-                
+
                 // TODO: Send email notification to customer
                 // TODO: Send notification to admin
             }
@@ -1235,16 +1235,16 @@ class ApiController extends BaseController
         try {
             // Extract order ID from metadata
             $order_id = $session['metadata']['order_id'] ?? null;
-            
+
             if ($order_id) {
                 $order = Order::find($order_id);
-                
+
                 if ($order) {
                     $order->stripe_paid = 'Yes';
                     $order->payment_confirmation = 'PAID';
                     $order->order_state = 1; // Set to processing
                     $order->save();
-                    
+
                     Log::info('Order payment completed via checkout: ' . $order->id);
                 }
             }
@@ -2306,7 +2306,6 @@ class ApiController extends BaseController
                     'min_compatibility_score' => $r->get('min_score', 40)
                 ]
             ], 'Discovery users retrieved successfully with enhanced matching.');
-
         } catch (\Exception $e) {
             return $this->error('Discovery failed: ' . $e->getMessage());
         }
@@ -2421,7 +2420,7 @@ class ApiController extends BaseController
         if ($user->occupation) $completeness++;
         if ($user->city) $completeness++;
         if ($user->interests) $completeness++;
-        
+
         // Handle profile_photos - check if it's already an array or needs decoding
         $photos = [];
         if ($user->profile_photos) {
@@ -2431,7 +2430,7 @@ class ApiController extends BaseController
                 $photos = json_decode($user->profile_photos, true) ?: [];
             }
         }
-        
+
         if (is_array($photos) && count($photos) > 0) $completeness++;
         if (is_array($photos) && count($photos) >= 3) $completeness++;
         if ($user->tagline) $completeness++;
@@ -2789,8 +2788,8 @@ class ApiController extends BaseController
 
             // FIXED: Get diverse users from database - very simple approach
             $query = User::where('id', '!=', $user->id)
-                         ->where('account_status', 'Active')
-                         ->inRandomOrder(); // Important: randomize to avoid duplicates
+                ->where('account_status', 'Active')
+                ->inRandomOrder(); // Important: randomize to avoid duplicates
 
             $discoveredUsers = $query->paginate($limit, ['*'], 'page', $page);
 
@@ -2863,7 +2862,6 @@ class ApiController extends BaseController
                 ],
                 'filter_counts' => $filterCounts
             ], 'Discovery users retrieved successfully with enhanced matching.');
-
         } catch (\Exception $e) {
             return $this->error('Failed to get discoverable users: ' . $e->getMessage());
         }
@@ -6133,5 +6131,179 @@ class ApiController extends BaseController
             return $this->error('Failed to submit order: ' . $e->getMessage());
         }
     }
+
+    /**
+     * Enhanced Profile Wizard Endpoint
+     * Handles comprehensive profile setup with validation and safe field processing
+     */
+    public function profile_wizard_save(Request $r)
+    {
+        $u = Utils::get_user($r);
+        if ($u == null) {
+            return Utils::error("User not authenticated.");
+        }
+
+        $user = User::find($u->id);
+        if ($user == null) {
+            return Utils::error("User not found.");
+        }
+
+        try {
+            // Define safe fields that can be updated
+            $safeFields = [
+                // Basic info
+                'first_name',
+                'last_name',
+                'email',
+                'dob',
+                'sex',
+                'phone_number',
+                'city',
+
+                // Physical attributes
+                'height_cm',
+                'body_type',
+                'sexual_orientation',
+
+                // Lifestyle 
+                'smoking_habit',
+                'drinking_habit',
+                'pet_preference',
+                'religion',
+                'political_views',
+                'education_level',
+                'occupation',
+                'languages_spoken',
+
+                // Goals & Preferences
+                'looking_for',
+                'interested_in',
+                'age_range_min',
+                'age_range_max',
+                'max_distance_km',
+                'family_plans',
+                'bio',
+
+                // Interests (structured)
+                'interests_json'
+            ];
+
+            // Get table columns to validate
+            $table_name = $user->getTable();
+            $columns = Schema::getColumnListing($table_name);
+
+            // Process and validate each field
+            foreach ($safeFields as $field) {
+                if ($r->has($field) && in_array($field, $columns)) {
+                    $value = $r->input($field);
+
+                    // Clean and validate the value
+                    $cleanValue = $this->cleanProfileField($field, $value);
+                    if ($cleanValue !== null) {
+                        $user->$field = $cleanValue;
+                    }
+                }
+            }
+
+            // Handle avatar upload separately to prevent overwriting
+            if ($r->hasFile('avatar')) {
+                try {
+                    $avatarPath = Utils::file_upload($r->file('avatar'));
+                    if (strlen($avatarPath) > 3) {
+                        $user->avatar = $avatarPath;
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Avatar upload failed during profile wizard', [
+                        'user_id' => $user->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+
+            // Update profile completion percentage
+            $user->completed_profile_pct = $this->calculateProfileCompleteness($user);
+
+            // Save the user
+            $user->save();
+
+            // Return the updated user
+            $updatedUser = User::find($user->id);
+
+            return Utils::success($updatedUser, "Profile updated successfully.");
+        } catch (\Exception $e) {
+            Log::error('Profile wizard save failed', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return Utils::error("Failed to save profile: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Clean and validate individual profile fields
+     */
+    private function cleanProfileField($field, $value)
+    {
+        if ($value === null || $value === '') {
+            return '';
+        }
+
+        switch ($field) {
+            case 'first_name':
+            case 'last_name':
+            case 'city':
+            case 'occupation':
+                return trim(strip_tags($value));
+
+            case 'email':
+                $email = filter_var(trim($value), FILTER_VALIDATE_EMAIL);
+                return $email ? $email : null;
+
+            case 'phone_number':
+                return preg_replace('/[^0-9+\-\(\)\s]/', '', $value);
+
+            case 'height_cm':
+                $height = (int) $value;
+                return ($height >= 120 && $height <= 250) ? $height : null;
+
+            case 'age_range_min':
+            case 'age_range_max':
+                $age = (int) $value;
+                return ($age >= 18 && $age <= 80) ? $age : null;
+
+            case 'max_distance_km':
+                $distance = (int) $value;
+                return ($distance >= 1 && $distance <= 100) ? $distance : 25;
+
+            case 'bio':
+                return trim(strip_tags($value, '<br><p>'));
+
+            case 'interests_json':
+                // Validate JSON structure
+                $decoded = json_decode($value, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                    // Clean each interest and limit to 10
+                    $cleanInterests = array_slice(
+                        array_map(function ($interest) {
+                            return trim(strip_tags($interest));
+                        }, $decoded),
+                        0,
+                        10
+                    );
+                    return json_encode($cleanInterests);
+                }
+                return '[]';
+
+            case 'languages_spoken':
+                return trim(strip_tags($value));
+
+            default:
+                // For dropdown fields, return as-is (they're validated on frontend)
+                return trim(strip_tags($value));
+        }
+    }
+
     // ======= END CART & ORDER MANAGEMENT =======
 }

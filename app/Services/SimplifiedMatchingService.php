@@ -99,7 +99,15 @@ class SimplifiedMatchingService
             return 10; // Higher base score for users without age info - be more generous!
         }
 
-        $user2Age = Carbon::parse($user2->dob)->age;
+        // FIXED: Enhanced age calculation with better error handling
+        try {
+            $user2Age = $this->calculateUserAge($user2->dob);
+            if ($user2Age === null) {
+                return 10; // Default score if age calculation fails
+            }
+        } catch (\Exception $e) {
+            return 10; // Default score on any error
+        }
 
         // Check if user2's age falls within user1's preferences - be more lenient
         if ($user1->age_range_min && $user1->age_range_max) {
@@ -120,11 +128,41 @@ class SimplifiedMatchingService
         }
 
         // If no age preferences set, be very generous
-        $ageDiff = abs($user1->dob ? Carbon::parse($user1->dob)->age - $user2Age : 3);
+        $ageDiff = abs($user1->dob ? $this->calculateUserAge($user1->dob) - $user2Age : 3);
         if ($ageDiff <= 5) return 20;      // Very compatible
         if ($ageDiff <= 10) return 17;     // Good compatibility
         if ($ageDiff <= 15) return 14;     // Decent compatibility
         return 10;                          // Still some compatibility
+    }
+
+    /**
+     * ENHANCED: Calculate user age from DOB with proper error handling
+     * Handles DOB format "1993-07-25" correctly
+     */
+    private function calculateUserAge($dob)
+    {
+        if (empty($dob)) {
+            return null;
+        }
+
+        try {
+            $birthDate = Carbon::parse($dob);
+            $today = Carbon::now();
+            
+            $age = $today->year - $birthDate->year;
+            
+            // Adjust for birthday not yet reached this year
+            if ($today->month < $birthDate->month || 
+                ($today->month == $birthDate->month && $today->day < $birthDate->day)) {
+                $age--;
+            }
+            
+            return $age;
+        } catch (\Exception $e) {
+            // Log the error and return null
+            Log::warning("Failed to calculate age from DOB: {$dob}, Error: " . $e->getMessage());
+            return null;
+        }
     }
 
     /**
@@ -278,7 +316,7 @@ class SimplifiedMatchingService
                     'id' => $otherUser->id,
                     'name' => $otherUser->name,
                     'avatar' => $otherUser->avatar,
-                    'age' => $otherUser->dob ? Carbon::parse($otherUser->dob)->age : null,
+                    'age' => $this->calculateUserAge($otherUser->dob),
                     'location' => $otherUser->city,
                     'bio' => $otherUser->bio ? substr($otherUser->bio, 0, 80) . '...' : null,
                     'last_online' => $otherUser->last_online_at,

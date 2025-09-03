@@ -301,6 +301,10 @@ class User extends Administrator implements JWTSubject
         // Profile photos
         'profile_photos',
         
+        // Enhanced profile fields
+        'family_plans',
+        'interests_json',
+        
         // Additional Metadata
         'profile_completion_steps',
         'onboarding_completed',

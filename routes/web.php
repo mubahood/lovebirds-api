@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\ApiController;
+use App\Http\Controllers\DummyDataController;
 use App\Http\Controllers\LandingController;
 use App\Http\Controllers\MainController;
 use App\Models\Gen;
@@ -8,6 +9,7 @@ use App\Models\MovieModel;
 use App\Models\MovieView;
 use App\Models\SeriesMovie;
 use App\Models\TrendingNotification;
+use App\Models\User;
 use App\Models\Utils;
 use Carbon\Carbon;
 use Dflydev\DotAccessData\Util;
@@ -23,6 +25,74 @@ use Symfony\Component\Process\Process;
 | Landing Site Routes
 |--------------------------------------------------------------------------
 */
+
+// Comprehensive African Dummy Data Generator
+Route::get('generate-dummy', [DummyDataController::class, 'generateDummyData']);
+
+// Simple African Dummy Data Generator (backup)
+Route::get('generate-dummy-simple', function (Request $request) {
+    die('Access via browser<br>http://localhost:8888/lovebirds-api/generate-dummy-simple');
+    try {
+        $africanCountries = [
+            'Nigeria' => ['Lagos', 'Abuja', 'Kano', 'Ibadan', 'Port Harcourt'],
+            'Kenya' => ['Nairobi', 'Mombasa', 'Kisumu', 'Nakuru', 'Eldoret'],
+            'Uganda' => ['Kampala', 'Gulu', 'Lira', 'Mbarara', 'Jinja'],
+            'Ghana' => ['Accra', 'Kumasi', 'Tamale', 'Takoradi', 'Cape Coast'],
+        ];
+
+        $maleNames = ['Kwame', 'Kofi', 'Olu', 'Chidi', 'Emeka', 'Tunde', 'Samuel', 'David'];
+        $femaleNames = ['Amara', 'Kemi', 'Funmi', 'Grace', 'Faith', 'Joy', 'Blessing', 'Mercy'];
+        $lastNames = ['Adebayo', 'Ogundimu', 'Kamau', 'Mwangi', 'Nwosu', 'Okoro', 'Ibrahim'];
+
+        $users = User::orderBy('id', 'asc')->limit(100)->get();
+        $updated = 0;
+
+        foreach ($users as $user) {
+            $gender = rand(0, 1) ? 'Male' : 'Female';
+            $firstName = $gender === 'Male' ? $maleNames[array_rand($maleNames)] : $femaleNames[array_rand($femaleNames)];
+            $lastName = $lastNames[array_rand($lastNames)];
+            $country = array_rand($africanCountries);
+            $city = $africanCountries[$country][array_rand($africanCountries[$country])];
+            $age = rand(18, 45);
+            $avatar = $gender === 'Female' ? 'images/' . rand(1, 25) . '.jpg' : 'images/' . rand(26, 50) . '.jpg';
+
+            $user->update([
+                'first_name' => $firstName,
+                'last_name' => $lastName,
+                'name' => $firstName . ' ' . $lastName,
+                'avatar' => $avatar,
+                'sex' => $gender,
+                'dob' => Carbon::now()->subYears($age)->format('Y-m-d'),
+                'country' => $country,
+                'city' => $city,
+                'bio' => "Hello! I'm {$firstName} from {$city}, {$country}. Looking for genuine connection! 💕",
+                'occupation' => ['Teacher', 'Nurse', 'Engineer', 'Student'][array_rand(['Teacher', 'Nurse', 'Engineer', 'Student'])],
+                'height_cm' => $gender === 'Male' ? rand(165, 195) : rand(155, 180),
+                'sexual_orientation' => 'Straight',
+                'looking_for' => 'Serious Relationship',
+                'interested_in' => $gender === 'Male' ? 'Female' : 'Male',
+                'account_status' => 'Active',
+                'profile_visibility' => 'Public',
+                'email_verified' => 'Yes',
+                'completed_profile_pct' => rand(75, 100),
+                'profile_views' => rand(10, 200),
+                'likes_received' => rand(5, 100),
+            ]);
+            $updated++;
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "Updated {$updated} users with African profiles!",
+            'updated_count' => $updated
+        ]);
+    } catch (Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error: ' . $e->getMessage()
+        ], 500);
+    }
+});
 
 // Landing page (homepage)
 Route::get('/', function () {
