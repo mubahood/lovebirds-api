@@ -293,4 +293,56 @@ class Order extends Model
             throw new \Exception("Error Processing Request", 1);
         }
     }
+
+    /**
+     * Check and update payment status from Stripe
+     */
+    public function checkPaymentStatus()
+    {
+        if (!$this->stripe_id || strlen($this->stripe_id) === 0) {
+            return false;
+        }
+
+        try {
+            $stripe = new \Stripe\StripeClient(env('STRIPE_KEY'));
+            
+            // Get the payment link from Stripe
+            $paymentLink = $stripe->paymentLinks->retrieve($this->stripe_id);
+            
+            if ($paymentLink) {
+                // Check if there are any completed sessions for this payment link
+                $sessions = $stripe->checkout->sessions->all([
+                    'payment_link' => $this->stripe_id,
+                    'status' => 'complete',
+                    'limit' => 1,
+                ]);
+
+                if (count($sessions->data) > 0) {
+                    // Payment found, mark as paid
+                    $this->stripe_paid = 1;
+                    $this->payment_confirmation = 'PAID';
+                    $this->save();
+                    
+                    Log::info('Order payment status updated to PAID: ' . $this->id);
+                    return true;
+                }
+            }
+            
+            return false;
+        } catch (\Throwable $e) {
+            Log::error('Error checking order payment status: ' . $e->getMessage(), [
+                'order_id' => $this->id,
+                'stripe_id' => $this->stripe_id
+            ]);
+            return false;
+        }
+    }
+
+    /**
+     * Check if order is paid
+     */
+    public function isPaid()
+    {
+        return $this->stripe_paid == 1 || $this->payment_confirmation === 'PAID';
+    }
 }

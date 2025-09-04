@@ -24,6 +24,12 @@ return new class extends Migration
             if (!Schema::hasColumn('admin_users', 'pending_stripe_payment_id')) {
             $table->string('pending_stripe_payment_id')->nullable();
             }
+            if (!Schema::hasColumn('admin_users', 'pending_subscription_plan')) {
+            $table->enum('pending_subscription_plan', ['weekly', 'monthly', 'quarterly'])->nullable();
+            }
+            if (!Schema::hasColumn('admin_users', 'pending_stripe_payment_url')) {
+            $table->string('pending_stripe_payment_url')->nullable();
+            }
             if (!Schema::hasColumn('admin_users', 'subscription_updated_at')) {
             $table->timestamp('subscription_updated_at')->nullable();
             }
@@ -41,6 +47,8 @@ return new class extends Migration
                 'subscription_plan', 
                 'subscription_expires_at',
                 'pending_stripe_payment_id',
+                'pending_subscription_plan',
+                'pending_stripe_payment_url',
                 'subscription_updated_at'
             ]);
         });

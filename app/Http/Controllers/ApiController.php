@@ -1867,49 +1867,54 @@ class ApiController extends BaseController
             // Get payment link details
             $paymentLink = $stripe->paymentLinks->retrieve($user->pending_stripe_payment_id);
 
-            // Check if payment was completed by looking at recent payments
-            $payments = $stripe->paymentIntents->all([
-                'limit' => 10,
-                'metadata' => ['user_id' => $user->id]
-            ]);
-
             $paymentFound = false;
-            foreach ($payments->data as $payment) {
-                if (
-                    $payment->status === 'succeeded' &&
-                    isset($payment->metadata['user_id']) &&
-                    $payment->metadata['user_id'] == $user->id
-                ) {
+            
+            // Method 1: Check for associated checkout sessions (most reliable)
+            try {
+                $sessions = $stripe->checkout->sessions->all([
+                    'payment_link' => $user->pending_stripe_payment_id,
+                    'limit' => 10
+                ]);
 
-                    // Activate subscription
-                    $planId = $user->pending_subscription_plan;
-                    $user->subscription_status = 'active';
-                    $user->subscription_plan = $planId;
-                    $user->subscription_started_at = now();
-
-                    // Set expiration based on plan
-                    switch ($planId) {
-                        case 'weekly':
-                            $user->subscription_expires_at = now()->addWeek();
-                            break;
-                        case 'monthly':
-                            $user->subscription_expires_at = now()->addMonth();
-                            break;
-                        case 'quarterly':
-                            $user->subscription_expires_at = now()->addMonths(3);
-                            break;
+                foreach ($sessions->data as $session) {
+                    if ($session->payment_status === 'paid') {
+                        $paymentFound = true;
+                        break;
                     }
-
-                    // Clear pending payment info
-                    $user->pending_subscription_plan = null;
-                    $user->pending_stripe_payment_id = null;
-                    $user->pending_stripe_payment_url = null;
-                    $user->stripe_payment_id = $payment->id;
-                    $user->save();
-
-                    $paymentFound = true;
-                    break;
                 }
+            } catch (\Exception $e) {
+                // Fall back to checking payment link status directly
+                if ($paymentLink->status === 'paid' || $paymentLink->active === false) {
+                    $paymentFound = true;
+                }
+            }
+
+            if ($paymentFound) {
+                // Activate subscription
+                $planId = $user->pending_subscription_plan;
+                $user->subscription_status = 'active';
+                $user->subscription_plan = $planId;
+                $user->subscription_started_at = now();
+
+                // Set expiration based on plan
+                switch ($planId) {
+                    case 'weekly':
+                        $user->subscription_expires_at = now()->addWeek();
+                        break;
+                    case 'monthly':
+                        $user->subscription_expires_at = now()->addMonth();
+                        break;
+                    case 'quarterly':
+                        $user->subscription_expires_at = now()->addMonths(3);
+                        break;
+                }
+
+                // Clear pending payment info
+                $user->pending_subscription_plan = null;
+                $user->pending_stripe_payment_id = null;
+                $user->pending_stripe_payment_url = null;
+                $user->subscription_updated_at = now();
+                $user->save();
             }
 
             if ($paymentFound) {
@@ -2054,6 +2059,351 @@ class ApiController extends BaseController
     }
 
     // ======= END STRIPE SUBSCRIPTION SYSTEM =======
+
+    // ======= SUBSCRIPTION MANAGEMENT SYSTEM =======
+
+    /**
+     * Get user's subscription history
+     */
+    public function subscription_history(Request $r)
+    {
+        $user = Utils::get_user($r);
+        if (!$user) {
+            return $this->error('User not authenticated.');
+        }
+
+        try {
+            $subscriptions = \App\Models\Subscription::where('user_id', $user->id)
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->map(function($subscription) {
+                    return [
+                        'id' => $subscription->id,
+                        'plan_id' => $subscription->plan_id,
+                        'plan_name' => ucfirst($subscription->plan_id) . ' Premium',
+                        'amount' => number_format($subscription->amount, 2),
+                        'currency' => strtoupper($subscription->currency),
+                        'status' => $subscription->getStatusText(),
+                        'is_active' => $subscription->isActive(),
+                        'is_paid' => $subscription->isPaid(),
+                        'start_date' => $subscription->start_date ? $subscription->start_date->format('M d, Y') : null,
+                        'end_date' => $subscription->end_date ? $subscription->end_date->format('M d, Y') : null,
+                        'days_remaining' => $subscription->getDaysRemaining(),
+                        'stripe_url' => $subscription->stripe_url,
+                        'payment_confirmation' => $subscription->payment_confirmation,
+                        'created_at' => $subscription->created_at->format('M d, Y H:i'),
+                    ];
+                });
+
+            return $this->success([
+                'subscriptions' => $subscriptions,
+                'total_count' => $subscriptions->count(),
+                'active_subscription' => $subscriptions->where('is_active', true)->first()
+            ], 'Subscription history retrieved successfully.');
+
+        } catch (\Exception $e) {
+            // Log::error('Error retrieving subscription history: ' . $e->getMessage());
+            return $this->error('Failed to retrieve subscription history.');
+        }
+        return $this->success([
+
+        ], 'Subscription history retrieved successfully.');
+    }
+
+    /**
+     * Create subscription and generate Stripe payment link
+     */
+    public function create_subscription(Request $r)
+    {
+        $user = Utils::get_user($r);
+        if (!$user) {
+            return $this->error('User not authenticated.');
+        }
+
+        $planId = $r->plan_id;
+        if (!$planId || !in_array($planId, ['weekly', 'monthly', 'quarterly'])) {
+            return $this->error('Invalid subscription plan. Must be: weekly, monthly, or quarterly.');
+        }
+
+        try {
+            // Check for existing pending subscription for same plan
+            $existingSubscription = \App\Models\Subscription::where('user_id', $user->id)
+                ->where('plan_id', $planId)
+                ->where('status', 'pending')
+                ->where('stripe_paid', 'No')
+                ->first();
+
+            if ($existingSubscription && $existingSubscription->stripe_url) {
+                return $this->success([
+                    'subscription_id' => $existingSubscription->id,
+                    'payment_url' => $existingSubscription->stripe_url,
+                    'plan_id' => $planId,
+                    'amount' => number_format($existingSubscription->amount, 2),
+                    'currency' => 'CAD'
+                ], 'Existing payment link found for this subscription.');
+            }
+
+            // Plan details
+            $planDetails = [
+                'weekly' => ['name' => 'Weekly Premium', 'duration' => '1 week', 'amount' => 10.00],
+                'monthly' => ['name' => 'Monthly Premium', 'duration' => '1 month', 'amount' => 30.00],
+                'quarterly' => ['name' => 'Quarterly Premium', 'duration' => '3 months', 'amount' => 70.00]
+            ];
+
+            $plan = $planDetails[$planId];
+
+            // Create subscription record
+            $subscription = \App\Models\Subscription::create([
+                'user_id' => $user->id,
+                'plan_id' => $planId,
+                'plan_name' => $plan['name'],
+                'plan_duration' => $plan['duration'],
+                'amount' => $plan['amount'],
+                'currency' => 'cad',
+                'status' => 'pending',
+                'payment_method' => 'stripe',
+                'metadata' => [
+                    'created_via' => 'mobile_app',
+                    'user_agent' => $r->header('User-Agent'),
+                    'ip_address' => $r->ip()
+                ]
+            ]);
+
+            // Generate Stripe payment link
+            $subscription->create_payment_link();
+
+            if ($subscription->stripe_url) {
+                return $this->success([
+                    'subscription_id' => $subscription->id,
+                    'payment_url' => $subscription->stripe_url,
+                    'plan_id' => $planId,
+                    'plan_name' => $plan['name'],
+                    'amount' => number_format($subscription->amount, 2),
+                    'currency' => 'CAD',
+                    'duration' => $plan['duration']
+                ], 'Subscription created successfully. Please complete payment.');
+            } else {
+                return $this->error('Failed to generate payment link. Please try again.');
+            }
+
+        } catch (\Exception $e) {
+            Log::error('Error creating subscription: ' . $e->getMessage(), [
+                'user_id' => $user->id,
+                'plan_id' => $planId
+            ]);
+            return $this->error('Failed to create subscription: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Check subscription payment status and refresh from Stripe
+     */
+    public function refresh_subscription_payment(Request $r)
+    {
+        $user = Utils::get_user($r);
+        if (!$user) {
+            return $this->error('User not authenticated.');
+        }
+
+        $subscriptionId = $r->subscription_id;
+        if (!$subscriptionId) {
+            return $this->error('Subscription ID is required.');
+        }
+
+        try {
+            $subscription = \App\Models\Subscription::where('id', $subscriptionId)
+                ->where('user_id', $user->id)
+                ->first();
+
+            if (!$subscription) {
+                return $this->error('Subscription not found.');
+            }
+
+            // Check payment status with Stripe
+            $paymentStatus = $subscription->checkPaymentStatus();
+
+            // Refresh subscription data
+            $subscription->refresh();
+
+            return $this->success([
+                'subscription_id' => $subscription->id,
+                'payment_status' => $paymentStatus['status'],
+                'message' => $paymentStatus['message'],
+                'is_paid' => $subscription->isPaid(),
+                'is_active' => $subscription->isActive(),
+                'status' => $subscription->getStatusText(),
+                'end_date' => $subscription->end_date ? $subscription->end_date->format('M d, Y') : null,
+                'days_remaining' => $subscription->getDaysRemaining()
+            ], $paymentStatus['message']);
+
+        } catch (\Exception $e) {
+            Log::error('Error checking subscription payment status: ' . $e->getMessage());
+            return $this->error('Failed to check payment status: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Refresh Order Payment Status
+     */
+    public function refresh_order_payment(Request $r)
+    {
+        $user = Utils::get_user($r);
+        if ($user == null) {
+            return $this->error('User not found');
+        }
+
+        if (!$r->filled('order_id')) {
+            return $this->error('Order ID is required');
+        }
+
+        try {
+            $order = Order::where('id', $r->order_id)
+                          ->where('user', $user->id)
+                          ->first();
+
+            if (!$order) {
+                return $this->error('Order not found');
+            }
+
+            // Check payment status from Stripe
+            $paymentUpdated = $order->checkPaymentStatus();
+
+            return $this->success([
+                'order_id' => $order->id,
+                'payment_status' => $order->isPaid() ? 'paid' : 'pending',
+                'stripe_paid' => $order->stripe_paid,
+                'payment_confirmation' => $order->payment_confirmation,
+                'was_updated' => $paymentUpdated
+            ], $paymentUpdated ? 
+                'Payment status updated successfully - Order is now marked as paid' : 
+                'No new payment found for this order - Status remains ' . ($order->isPaid() ? 'paid' : 'pending')
+            );
+
+        } catch (\Exception $e) {
+            Log::error('Error refreshing order payment status: ' . $e->getMessage());
+            return $this->error('Error refreshing payment status: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Cancel subscription
+     */
+    public function cancel_subscription(Request $r)
+    {
+        $user = Utils::get_user($r);
+        if (!$user) {
+            return $this->error('User not authenticated.');
+        }
+
+        $subscriptionId = $r->subscription_id;
+        if (!$subscriptionId) {
+            return $this->error('Subscription ID is required.');
+        }
+
+        try {
+            $subscription = \App\Models\Subscription::where('id', $subscriptionId)
+                ->where('user_id', $user->id)
+                ->where('status', 'active')
+                ->first();
+
+            if (!$subscription) {
+                return $this->error('Active subscription not found.');
+            }
+
+            $subscription->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now()
+            ]);
+
+            // Update user subscription status
+            $user->update([
+                'subscription_status' => 'cancelled'
+            ]);
+
+            return $this->success([
+                'subscription_id' => $subscription->id,
+                'status' => 'cancelled',
+                'cancelled_at' => $subscription->cancelled_at->format('M d, Y H:i')
+            ], 'Subscription cancelled successfully.');
+
+        } catch (\Exception $e) {
+            Log::error('Error cancelling subscription: ' . $e->getMessage());
+            return $this->error('Failed to cancel subscription: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get subscription plans and pricing
+     */
+    public function subscription_plans(Request $r)
+    {
+        try {
+            $plans = [
+                'weekly' => [
+                    'id' => 'weekly',
+                    'name' => 'Weekly Premium',
+                    'price' => 10.00,
+                    'currency' => 'CAD',
+                    'duration' => '1 week',
+                    'save_percentage' => 0,
+                    'badge' => 'TRY IT',
+                    'features' => [
+                        'Unlimited swipes',
+                        '5 super likes/day',
+                        'See who likes you',
+                        'Profile boost'
+                    ]
+                ],
+                'monthly' => [
+                    'id' => 'monthly',
+                    'name' => 'Monthly Premium',
+                    'price' => 30.00,
+                    'currency' => 'CAD',
+                    'duration' => '1 month',
+                    'save_percentage' => 25,
+                    'badge' => 'MOST POPULAR',
+                    'original_price' => 40.00,
+                    'features' => [
+                        'Everything in Weekly',
+                        'Unlimited rewinds',
+                        'Read receipts',
+                        'Priority support',
+                        'Advanced filters'
+                    ]
+                ],
+                'quarterly' => [
+                    'id' => 'quarterly',
+                    'name' => 'Quarterly Premium',
+                    'price' => 70.00,
+                    'currency' => 'CAD',
+                    'duration' => '3 months',
+                    'save_percentage' => 42,
+                    'badge' => 'BEST VALUE',
+                    'original_price' => 120.00,
+                    'features' => [
+                        'Everything in Monthly',
+                        'Profile insights',
+                        'Date planning tools',
+                        'Relationship coaching',
+                        'VIP customer service'
+                    ]
+                ]
+            ];
+
+            return $this->success([
+                'plans' => $plans,
+                'currency' => 'CAD',
+                'tax_rate' => 0.13,
+                'tax_note' => '13% HST will be added at checkout'
+            ], 'Subscription plans retrieved successfully.');
+
+        } catch (\Exception $e) {
+            Log::error('Error retrieving subscription plans: ' . $e->getMessage());
+            return $this->error('Failed to retrieve subscription plans.');
+        }
+    }
+
+    // ======= END SUBSCRIPTION MANAGEMENT SYSTEM =======
 
     // ======= ADVANCED DATING DISCOVERY SYSTEM =======
 

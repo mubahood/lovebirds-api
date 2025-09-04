@@ -28,10 +28,22 @@ Route::get("delivery-addresses", [ApiController::class, "delivery_addresses"]);
 
 // Profile Photo Management Endpoints
 Route::middleware([JwtMiddleware::class])->group(function () {
+    Route::post('create_subscription_payment', [ApiController::class, 'create_subscription_payment']);
+Route::post('check_subscription_payment', [ApiController::class, 'check_subscription_payment']);
     Route::post('upload-profile-photos', [ApiController::class, 'upload_profile_photos']);
     Route::post('delete-profile-photo', [ApiController::class, 'delete_profile_photo']);
     Route::post('reorder-profile-photos', [ApiController::class, 'reorder_profile_photos']);
     Route::post("orders-create", [ApiController::class, "orders_create"]);
+    
+    // New Subscription Management Routes  
+    Route::get('subscription-history', [ApiController::class, 'subscription_history']);
+    Route::post('create-subscription', [ApiController::class, 'create_subscription']);
+    Route::post('refresh-subscription-payment', [ApiController::class, 'refresh_subscription_payment']);
+    Route::post('cancel-subscription', [ApiController::class, 'cancel_subscription']);
+    Route::get('subscription-plans', [ApiController::class, 'subscription_plans']);
+
+    // Order Payment Management Routes
+    Route::post('refresh-order-payment', [ApiController::class, 'refresh_order_payment']);
 });
 
 Route::middleware([JwtMiddleware::class])->group(function () {
@@ -167,7 +179,6 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 
 
 // Subscription routes (temporarily without middleware for final testing)
-Route::post('create_subscription_payment', [ApiController::class, 'create_subscription_payment']);
-Route::post('check_subscription_payment', [ApiController::class, 'check_subscription_payment']);
+
 Route::get('subscription_status', [ApiController::class, 'subscription_status']);
 Route::post('test_user_activate_subscription', [ApiController::class, 'test_user_activate_subscription']);
