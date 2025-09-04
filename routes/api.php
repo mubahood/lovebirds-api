@@ -28,13 +28,19 @@ Route::get("delivery-addresses", [ApiController::class, "delivery_addresses"]);
 
 // Profile Photo Management Endpoints
 Route::middleware([JwtMiddleware::class])->group(function () {
+
+    Route::POST('chat-send', [ApiController::class, 'chat_send']);
+    Route::POST('chat-mark-as-read', [ApiController::class, 'chat_mark_as_read']);
+    Route::POST('chat-start', [ApiController::class, 'chat_start']);
+    Route::POST('chat-delete', [ApiController::class, 'chat_delete']);
+
     Route::post('create_subscription_payment', [ApiController::class, 'create_subscription_payment']);
-Route::post('check_subscription_payment', [ApiController::class, 'check_subscription_payment']);
+    Route::post('check_subscription_payment', [ApiController::class, 'check_subscription_payment']);
     Route::post('upload-profile-photos', [ApiController::class, 'upload_profile_photos']);
     Route::post('delete-profile-photo', [ApiController::class, 'delete_profile_photo']);
     Route::post('reorder-profile-photos', [ApiController::class, 'reorder_profile_photos']);
     Route::post("orders-create", [ApiController::class, "orders_create"]);
-    
+
     // New Subscription Management Routes  
     Route::get('subscription-history', [ApiController::class, 'subscription_history']);
     Route::post('create-subscription', [ApiController::class, 'create_subscription']);
@@ -49,7 +55,7 @@ Route::post('check_subscription_payment', [ApiController::class, 'check_subscrip
 Route::middleware([JwtMiddleware::class])->group(function () {
     // Profile management
     Route::post('profile-wizard-save', [ApiController::class, 'profile_wizard_save']);
-    
+
     Route::post('disable-account', [ApiController::class, 'disable_account']);
     Route::post('disable-account', [ApiController::class, 'disable_account']);
 
@@ -61,7 +67,7 @@ Route::middleware([JwtMiddleware::class])->group(function () {
 
     // Cart & Order Management
     Route::post('cart/submit-order', [ApiController::class, 'submit_order']);
-    
+
     // Order Management Endpoints
     Route::get("my-orders", [ApiController::class, "my_orders"]);
     Route::get("order-details", [ApiController::class, "order_details"]);
@@ -75,12 +81,11 @@ Route::middleware([JwtMiddleware::class])->group(function () {
     Route::post('/dynamic-delete', [DynamicCrudController::class, 'delete']);
     Route::POST("consultation-card-payment", [DynamicCrudController::class, 'consultation_card_payment']);
 
-    Route::POST('chat-send', [ApiController::class, 'chat_send']);
+
     Route::get('chat-heads', [ApiController::class, 'chat_heads']);
     Route::get('chat-messages', [ApiController::class, 'chat_messages']);
-    Route::POST('chat-mark-as-read', [ApiController::class, 'chat_mark_as_read']);
-    Route::POST('chat-start', [ApiController::class, 'chat_start']);
-    Route::POST('chat-delete', [ApiController::class, 'chat_delete']);
+
+
 
     // Enhanced Dating Chat Features
     Route::POST('chat-typing-indicator', [ApiController::class, 'chat_typing_indicator']);
