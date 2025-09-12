@@ -876,6 +876,284 @@ class ApiController extends BaseController
         return $this->success($chat_message, 'Message sent successfully.');
     }
 
+    // ======= SUPER ADMIN TEST ACCOUNT CHAT MANAGEMENT =======
+
+    /**
+     * Get all chat heads for test accounts (Super Admin only)
+     * Only accessible to super admin (id = 1)
+     */
+    public function super_admin_chat_heads(Request $r)
+    {
+        $u = Utils::get_user($r);
+        if ($u == null) {
+            return $this->error('User not authenticated.');
+        }
+
+        // Verify super admin access
+        if ($u->id !== 1) {
+            return $this->error('Access denied. Super admin privileges required.');
+        }
+
+        // Get all test account users from admin_users table where is_test_account = 'Yes'
+        $testUsers = Administrator::where('is_test_account', 'Yes')->pluck('id')->toArray();
+        
+        if (empty($testUsers)) {
+            return $this->success([], 'No test accounts found.');
+        }
+
+        // Get all chat heads where either customer_id or product_owner_id is a test account
+        $chat_heads = ChatHead::where(function($query) use ($testUsers) {
+            $query->whereIn('customer_id', $testUsers)
+                  ->orWhereIn('product_owner_id', $testUsers);
+        })->orderBy('last_message_time', 'desc')->get();
+
+        $heads = [];
+        foreach ($chat_heads as $head) {
+            // Get last message
+            $lastMessage = ChatMessage::where('chat_head_id', $head->id)
+                                    ->orderBy('created_at', 'desc')
+                                    ->first();
+
+            if ($lastMessage == null) {
+                continue;
+            }
+
+            // Get participant details
+            $customer = User::find($head->customer_id);
+            $productOwner = User::find($head->product_owner_id);
+
+            if (!$customer || !$productOwner) {
+                continue;
+            }
+
+            // Determine which user is the test account
+            $testAccount = null;
+            $otherUser = null;
+            
+            if (in_array($head->customer_id, $testUsers)) {
+                $testAccount = $customer;
+                $otherUser = $productOwner;
+            } else {
+                $testAccount = $productOwner;
+                $otherUser = $customer;
+            }
+
+            // Count unread messages
+            $unreadCount = ChatMessage::where('chat_head_id', $head->id)
+                                    ->where('status', 'sent')
+                                    ->count();
+
+            $headData = [
+                'id' => $head->id,
+                'type' => $head->type,
+                'test_account_id' => $testAccount->id,
+                'test_account_name' => $testAccount->name,
+                'test_account_photo' => $testAccount->avatar ?? $testAccount->photo,
+                'other_user_id' => $otherUser->id,
+                'other_user_name' => $otherUser->name,
+                'other_user_photo' => $otherUser->avatar ?? $otherUser->photo,
+                'last_message_body' => $lastMessage->body,
+                'last_message_time' => $lastMessage->created_at,
+                'last_message_status' => $lastMessage->status,
+                'unread_messages_count' => $unreadCount,
+                'created_at' => $head->created_at,
+                'updated_at' => $head->updated_at
+            ];
+
+            $heads[] = $headData;
+        }
+
+        return $this->success($heads, 'Test account chat heads retrieved successfully.');
+    }
+
+    /**
+     * Get all messages for a specific chat head (Super Admin only)
+     * Only accessible to super admin (id = 1)
+     */
+    public function super_admin_chat_messages(Request $r)
+    {
+        $u = Utils::get_user($r);
+        if ($u == null) {
+            return $this->error('User not authenticated.');
+        }
+
+        // Verify super admin access
+        if ($u->id !== 1) {
+            return $this->error('Access denied. Super admin privileges required.');
+        }
+
+        if (!$r->chat_head_id) {
+            return $this->error('Chat head ID is required.');
+        }
+
+        $chat_head = ChatHead::find($r->chat_head_id);
+        if ($chat_head == null) {
+            return $this->error('Chat head not found.');
+        }
+
+        // Verify this chat head involves a test account
+        $testUsers = Administrator::where('is_test_account', 'Yes')->pluck('id')->toArray();
+        
+        $isTestChat = in_array($chat_head->customer_id, $testUsers) || in_array($chat_head->product_owner_id, $testUsers);
+        
+        if (!$isTestChat) {
+            return $this->error('This chat does not involve a test account.');
+        }
+
+        // Get all messages for this chat
+        $messages = ChatMessage::where('chat_head_id', $chat_head->id)
+                              ->orderBy('created_at', 'asc')
+                              ->get();
+
+        // Add sender and receiver details to each message
+        foreach ($messages as $message) {
+            $sender = User::find($message->sender_id);
+            $receiver = User::find($message->receiver_id);
+            
+            $message->sender_details = [
+                'id' => $sender->id ?? 0,
+                'name' => $sender->name ?? 'Unknown',
+                'photo' => $sender->avatar ?? $sender->photo ?? null
+            ];
+            
+            $message->receiver_details = [
+                'id' => $receiver->id ?? 0,
+                'name' => $receiver->name ?? 'Unknown',
+                'photo' => $receiver->avatar ?? $receiver->photo ?? null
+            ];
+        }
+
+        return $this->success($messages, 'Test account chat messages retrieved successfully.');
+    }
+
+    /**
+     * Send message on behalf of test account (Super Admin only)
+     * Only accessible to super admin (id = 1)
+     */
+    public function super_admin_send_message(Request $r)
+    {
+        $u = Utils::get_user($r);
+        if ($u == null) {
+            return $this->error('User not authenticated.');
+        }
+
+        // Verify super admin access
+        if ($u->id !== 1) {
+            return $this->error('Access denied. Super admin privileges required.');
+        }
+
+        if (!$r->chat_head_id) {
+            return $this->error('Chat head ID is required.');
+        }
+
+        if (!$r->sender_id) {
+            return $this->error('Sender ID is required.');
+        }
+
+        if (!$r->content && !$r->body) {
+            return $this->error('Message content is required.');
+        }
+
+        $chat_head = ChatHead::find($r->chat_head_id);
+        if ($chat_head == null) {
+            return $this->error('Chat head not found.');
+        }
+
+        // Verify sender is a test account
+        $testUsers = Administrator::where('is_test_account', 'Yes')->pluck('id')->toArray();
+        
+        if (!in_array($r->sender_id, $testUsers)) {
+            return $this->error('Sender must be a test account.');
+        }
+
+        $sender = User::find($r->sender_id);
+        if ($sender == null) {
+            return $this->error('Sender not found.');
+        }
+
+        // Determine receiver
+        $receiver_id = ($chat_head->customer_id == $r->sender_id) ? $chat_head->product_owner_id : $chat_head->customer_id;
+        $receiver = User::find($receiver_id);
+        
+        if ($receiver == null) {
+            return $this->error('Receiver not found.');
+        }
+
+        // Create the message
+        $chat_message = new ChatMessage();
+        $chat_message->chat_head_id = $chat_head->id;
+        $chat_message->sender_id = $sender->id;
+        $chat_message->receiver_id = $receiver->id;
+        $chat_message->sender_name = $sender->name;
+        $chat_message->sender_photo = $sender->avatar ?? $sender->photo;
+        $chat_message->receiver_name = $receiver->name;
+        $chat_message->receiver_photo = $receiver->avatar ?? $receiver->photo;
+        $chat_message->type = $r->message_type ?? 'text';
+        $chat_message->body = $r->content ?? $r->body;
+        $chat_message->status = 'sent';
+        $chat_message->delivery_status = 'sent';
+        $chat_message->save();
+
+        // Update ChatHead with last message information
+        $chat_head->last_message_body = $chat_message->body;
+        $chat_head->last_message_time = now();
+        $chat_head->last_message_status = 'sent';
+        $chat_head->save();
+
+        // Load the complete message with relationships
+        $chat_message = ChatMessage::with(['sender', 'receiver'])->find($chat_message->id);
+
+        return $this->success($chat_message, 'Message sent successfully on behalf of test account.');
+    }
+
+    /**
+     * Mark messages as read for super admin chat management (Super Admin only)
+     * Only accessible to super admin (id = 1)
+     */
+    public function super_admin_mark_as_read(Request $r)
+    {
+        $u = Utils::get_user($r);
+        if ($u == null) {
+            return $this->error('User not authenticated.');
+        }
+
+        // Verify super admin access
+        if ($u->id !== 1) {
+            return $this->error('Access denied. Super admin privileges required.');
+        }
+
+        if (!$r->chat_head_id) {
+            return $this->error('Chat head ID is required.');
+        }
+
+        $chat_head = ChatHead::find($r->chat_head_id);
+        if ($chat_head == null) {
+            return $this->error('Chat head not found.');
+        }
+
+        // Verify this chat head involves a test account
+        $testUsers = Administrator::where('is_test_account', 'Yes')->pluck('id')->toArray();
+        
+        $isTestChat = in_array($chat_head->customer_id, $testUsers) || in_array($chat_head->product_owner_id, $testUsers);
+        
+        if (!$isTestChat) {
+            return $this->error('This chat does not involve a test account.');
+        }
+
+        // Mark all messages in this chat as read
+        $updatedCount = ChatMessage::where('chat_head_id', $chat_head->id)
+                                  ->where('status', 'sent')
+                                  ->update([
+                                      'status' => 'read',
+                                      'read_at' => now()
+                                  ]);
+
+        return $this->success([
+            'chat_head_id' => $chat_head->id,
+            'updated_messages_count' => $updatedCount
+        ], "Successfully marked {$updatedCount} messages as read for chat head {$chat_head->id}");
+    }
+
 
     //delivery_addresses
     public function delivery_addresses(Request $r)

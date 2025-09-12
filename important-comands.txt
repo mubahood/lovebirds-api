@@ -1,8 +1,8 @@
-php artisan make:model ContentModerationLog -m
+php artisan make:model User -m
 php artisan make:model TrendingNotification -m
 
 php artisan admin:make MyCounterController --model=App\Models\MyCounter
-php artisan admin:make ContentModerationLogController --model=App\\Models\\ContentModerationLog
+php artisan admin:make ChatMessageController --model=App\\Models\\ChatMessage
 
 php artisan db:seed --class=App\\Models\\MovieLike
 

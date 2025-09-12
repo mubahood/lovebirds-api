@@ -61,6 +61,9 @@ Route::group([
     $router->get('moderation/logs', 'ModerationAdminController@logs')->name('moderation.logs');
     $router->get('moderation/statistics', 'ModerationAdminController@statistics')->name('moderation.statistics');
     $router->get('moderation/statistics/export', 'ModerationAdminController@exportStatistics')->name('moderation.statistics.export');
+    $router->resource('users', UserController::class);
+    $router->resource('chat-heads', ChatHeadController::class);
+    $router->resource('chat-messages', ChatMessageController::class);
 
 
     // AJAX endpoints for moderation

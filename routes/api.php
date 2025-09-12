@@ -85,6 +85,11 @@ Route::middleware([JwtMiddleware::class])->group(function () {
     Route::get('chat-heads', [ApiController::class, 'chat_heads']);
     Route::get('chat-messages', [ApiController::class, 'chat_messages']);
 
+    // Super Admin Test Account Chat Management (Super Admin Only - ID = 1)
+    Route::get('super-admin-chat-heads', [ApiController::class, 'super_admin_chat_heads']);
+    Route::get('super-admin-chat-messages', [ApiController::class, 'super_admin_chat_messages']);
+    Route::post('super-admin-send-message', [ApiController::class, 'super_admin_send_message']);
+    Route::post('super-admin-mark-as-read', [ApiController::class, 'super_admin_mark_as_read']);
 
 
     // Enhanced Dating Chat Features
