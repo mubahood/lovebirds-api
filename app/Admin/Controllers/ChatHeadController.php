@@ -30,11 +30,11 @@ class ChatHeadController extends AdminController
 
         $grid->column('id', __('Id'))->editable();
         $grid->column('created_at', __('Created at'));
-        $grid->column('product_owner_id', __('Receiver'));
+        $grid->column('product_owner_id', __('Receiver ID'))->sortable()->editable();
         $grid->column('product_owner_name', __('Receiver owner name'))->editable();
         $grid->column('product_owner_photo', __('Receiver owner photo'))->lightbox(['width' => 50, 'height' => 50]);
         //customer_id
-        $grid->column('customer_id', __('Sender'))->sortable()->editable();
+        $grid->column('customer_id', __('Sender ID'))->sortable()->editable();
         $grid->column('customer_name', __('Sender name'))->sortable()->editable();
         $grid->column('customer_photo', __('Sender photo'))->lightbox(['width' => 50, 'height' => 50]);
         $grid->column('last_message_body', __('Last message body'))->sortable()->editable();
