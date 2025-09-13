@@ -151,7 +151,7 @@ class Utils
 
         $img_size = getimagesize($image->source_path); // returns an array that is filled with info
 
-        $image->jpeg_quality = Utils::get_jpeg_quality(filesize($image->source_path));
+        $image->jpeg_quality = 30;
         $image->preserve_aspect_ratio = true;
         $image->enlarge_smaller_images = true;
         if (!$image->resize(0, 0, ZEBRA_IMAGE_CROP_CENTER)) {
