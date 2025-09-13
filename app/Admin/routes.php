@@ -11,7 +11,43 @@ Route::group([
     'as'            => config('admin.route.prefix') . '.',
 ], function (Router $router) {
 
-    $router->get('dashboard', 'HomeController@index')->name('home');
+    // LOVEBIRDS DATING APP DASHBOARD ROUTES
+    $router->get('dashboard', 'DatingDashboardController@index')->name('home');
+    
+    // Dating Analytics Dashboard
+    $router->get('dating-analytics', 'DatingDashboardController@datingAnalytics')->name('dating.analytics');
+    $router->get('dating-engagement', 'DatingDashboardController@datingEngagement')->name('dating.engagement');
+    $router->get('dating-discovery', 'DatingDashboardController@discoveryPerformance')->name('dating.discovery');
+    
+    // Revenue & Monetization Dashboard  
+    $router->get('revenue-dashboard', 'RevenueDashboardController@index')->name('revenue.dashboard');
+    $router->get('subscription-metrics', 'RevenueDashboardController@subscriptions')->name('revenue.subscriptions');
+    $router->get('purchase-analytics', 'RevenueDashboardController@purchases')->name('revenue.purchases');
+    
+    // Marketplace Analytics Dashboard
+    $router->get('marketplace-dashboard', 'MarketplaceDashboardController@index')->name('marketplace.dashboard');
+    $router->get('marketplace-orders', 'MarketplaceDashboardController@orders')->name('marketplace.orders');
+    $router->get('marketplace-products', 'MarketplaceDashboardController@products')->name('marketplace.products');
+    
+    // User Management Dashboard
+    $router->get('user-management', 'UserManagementDashboardController@index')->name('users.dashboard');
+    $router->get('user-demographics', 'UserManagementDashboardController@demographics')->name('users.demographics');
+    $router->get('user-activity', 'UserManagementDashboardController@activity')->name('users.activity');
+    
+    // Safety & Moderation Dashboard (Enhanced)
+    $router->get('safety-dashboard', 'SafetyModerationDashboardController@index')->name('safety.dashboard');
+    $router->get('content-moderation', 'SafetyModerationDashboardController@moderation')->name('safety.moderation');
+    $router->get('user-reports', 'SafetyModerationDashboardController@reports')->name('safety.reports');
+    
+    // Engagement & Gamification Dashboard
+    $router->get('engagement-dashboard', 'EngagementDashboardController@index')->name('engagement.dashboard');
+    $router->get('user-retention', 'EngagementDashboardController@retention')->name('engagement.retention');
+    $router->get('feature-usage', 'EngagementDashboardController@features')->name('engagement.features');
+    
+    // Technical Performance Dashboard
+    $router->get('performance-dashboard', 'PerformanceDashboardController@index')->name('performance.dashboard');
+    $router->get('technical-metrics', 'PerformanceDashboardController@technical')->name('performance.technical');
+    $router->get('system-health', 'PerformanceDashboardController@system')->name('performance.system');
 
     $router->resource('products', ProductController::class);
     $router->resource('scraper-models', ScraperModelController::class);
