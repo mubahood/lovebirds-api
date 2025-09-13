@@ -33,6 +33,8 @@ class UserController extends AdminController
         $grid->column('avatar', __('Avatar'))
             ->lightbox(['width' => 50, 'height' => 50])
             ->sortable(); 
+        //name
+        $grid->column('name', __('Name'))->sortable()->editable();
         $grid->column('first_name', __('First name'))->sortable()->editable();
         $grid->column('last_name', __('Last name'))->sortable()->editable();
         $grid->column('username', __('Username'))->hide();
