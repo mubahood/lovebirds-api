@@ -25,6 +25,23 @@ class ChatMessageController extends AdminController
     protected function grid()
     {
         $grid = new Grid(new ChatMessage());
+        //add filter
+        $grid->filter(function ($filter) {
+            //by chat_head_id
+            $filter->equal('chat_head_id', __('Chat Head ID'));
+            //sender_id
+            $filter->equal('sender_id', __('Sender ID'));
+            //receiver_id
+            $filter->equal('receiver_id', __('Receiver ID'));
+            $filter->like('body', __('Body'));
+            $filter->like('sender_name', __('Sender name'));
+            $filter->like('receiver_name', __('Receiver name'));
+            $filter->equal('status', __('Status'))->select([
+                'sent' => __('Sent'),
+                'delivered' => __('Delivered'),
+                'read' => __('Read'),
+            ]);
+        });
         $grid->model()->orderBy('id', 'desc');
         $grid->quickSearch('body', 'sender_name', 'receiver_name', 'status');
         $grid->column('id', __('Id'))->sortable();
@@ -32,13 +49,24 @@ class ChatMessageController extends AdminController
             ->display(function ($createdAt) {
                 return date('Y-m-d H:i:s', strtotime($createdAt));
             });
-        $grid->column('sender_name', __('Sender name'))->sortable();
+        //chat head
+        $grid->column('chat_head_id', __('Chat head id'))->sortable();
+        //sender id
+        $grid->column('sender_id', __('Sender'))->sortable()->editable();
+        //receiver id
+        $grid->column('receiver_id', __('Receiver'))->sortable()->editable();
+        $grid->column('sender_name', __('Sender name'))->sortable()->editable();
         $grid->column('sender_photo', __('Sender photo'))->lightbox(['width' => 50, 'height' => 50]);
-        $grid->column('receiver_name', __('Receiver name'))->sortable();
+        $grid->column('receiver_name', __('Receiver name'))->sortable()->editable();
         $grid->column('receiver_photo', __('Receiver photo'))->lightbox(['width' => 50, 'height' => 50]);
-        $grid->column('body', __('Body'))->sortable();
+        $grid->column('body', __('Body'))->sortable()->limit(50)->editable();
         $grid->column('type', __('Type'))->sortable();
-        $grid->column('status', __('Status'))->sortable();
+        $grid->column('status', __('Status'))->sortable()
+            ->editable('select', [
+                'sent' => __('Sent'),
+                'delivered' => __('Delivered'),
+                'read' => __('Read'),
+            ]);
         return $grid;
         $grid->column('audio', __('Audio'))->sortable();
         $grid->column('video', __('Video'))->sortable();
@@ -59,7 +87,6 @@ class ChatMessageController extends AdminController
         $grid->column('media_thumbnail', __('Media thumbnail'));
         $grid->column('location_name', __('Location name'));
         $grid->column('location_address', __('Location address'));
-
     }
 
     /**

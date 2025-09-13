@@ -15,7 +15,7 @@ class ChatHeadController extends AdminController
      *
      * @var string
      */
-    protected $title = 'ChatHead';
+    protected $title = 'Chat Head';
 
     /**
      * Make a grid builder.
@@ -28,16 +28,21 @@ class ChatHeadController extends AdminController
         $grid->model()->orderBy('id', 'desc');
         $grid->quickSearch('product_name', 'product_owner_name', 'customer_name', 'last_message_body');
 
-        $grid->column('id', __('Id'));
+        $grid->column('id', __('Id'))->editable();
         $grid->column('created_at', __('Created at'));
-        $grid->column('updated_at', __('Updated at'));
         $grid->column('product_owner_id', __('Receiver'));
-        $grid->column('product_owner_name', __('Receiver owner name'));
+        $grid->column('product_owner_name', __('Receiver owner name'))->editable();
         $grid->column('product_owner_photo', __('Receiver owner photo'))->lightbox(['width' => 50, 'height' => 50]);
-        $grid->column('customer_name', __('Sender name'))->sortable();
+        //customer_id
+        $grid->column('customer_id', __('Sender'))->sortable()->editable();
+        $grid->column('customer_name', __('Sender name'))->sortable()->editable();
         $grid->column('customer_photo', __('Sender photo'))->lightbox(['width' => 50, 'height' => 50]);
-        $grid->column('last_message_body', __('Last message body'))->sortable(); 
-        $grid->column('last_message_status', __('Last message status'))->sortable();
+        $grid->column('last_message_body', __('Last message body'))->sortable()->editable();
+        $grid->column('last_message_status', __('Last message status'))->sortable()->editable();
+        //messages count
+        $grid->column('messages_count', __('Messages Count'))->display(function () {
+            return \App\Models\ChatMessage::where('chat_head_id', $this->id)->count();
+        });
         return $grid;
         $grid->column('type', __('Type'));
         $grid->column('sender_unread_count', __('Sender unread count'));
@@ -51,7 +56,6 @@ class ChatHeadController extends AdminController
         $grid->column('conversation_started_at', __('Conversation started at'));
         $grid->column('last_typing_activity', __('Last typing activity'));
         $grid->column('chat_metadata', __('Chat metadata'));
-
     }
 
     /**
